@@ -8,11 +8,12 @@ lerna-debug.log*
 
 # database
 *.sqlite
+*.db
+data/**
+!data/.gitkeep
 
-# package-json
-package-json.lock
-
-# bun deploy file
+# bun
+bun.lockb
 node_modules.bun
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
@@ -111,3 +112,4 @@ dist
 
 # TernJS port file
 .tern-port
+.history/

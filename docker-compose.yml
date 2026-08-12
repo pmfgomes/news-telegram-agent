@@ -1,0 +1,14 @@
+services:
+  news-agent:
+    build: .
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Lisbon
+      DATA_PATH: /app/data
+      CONFIG_PATH: /app/src/config/config.yaml
+    volumes:
+      - ${DATA_DIR:-./data}:/app/data
+      # Override topics/sources without rebuilding (file mount only)
+      - ${CONFIG_FILE:-./src/config/config.yaml}:/app/src/config/config.yaml:ro
+    restart: "no"

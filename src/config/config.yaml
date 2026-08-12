@@ -1,0 +1,140 @@
+timezone: Europe/Lisbon
+latest_per_source: 10
+max_candidates: 60
+# Max posts per Telegram topic each run
+top_n: 10
+relevance_threshold: 0.6
+
+# `name` must match the Telegram forum group topic name exactly.
+# Set telegram_thread_id for each topic (topics are assumed to already exist).
+# ranking_mode: filter (default) scores by interest; latest accepts all mapped items and only dedupes.
+topics:
+  - name: Technology
+    interest: General technology excluding artificial intelligence. Cover software, consumer tech, cybersecurity, chips, cloud, platforms, mobile, computing and major technology companies. Reject stories primarily about AI, LLMs or machine learning.
+    telegram_thread_id: 17
+  - name: AI
+    interest: Artificial intelligence only—LLMs, machine learning, AI products, research, labs, infrastructure, policy, safety and regulation. Reject general technology stories whose primary subject is not AI.
+    telegram_thread_id: 18
+  - name: Gaming
+    interest: Video games themselves—new games, releases, reviews, updates, gameplay, developers, studios, publishers, esports and the games industry. Reject hardware, peripherals, component benchmarks and shopping deals unless the main story directly affects a game.
+    telegram_thread_id: 19
+  - name: World news
+    interest: International geopolitics, conflicts, diplomacy, major global policy and society stories. Sources are already world-news feeds—do not over-filter.
+    ranking_mode: latest
+    telegram_thread_id: 20
+  - name: World economy
+    interest: Global markets, macroeconomics, inflation, trade, central banks, multinational business. Sources are already business/economy feeds—do not over-filter.
+    ranking_mode: latest
+    telegram_thread_id: 21
+  - name: Portugal
+    interest: Portuguese politics, society, culture, national current affairs (not economy-focused)
+    telegram_thread_id: 22
+  - name: Portugal economy
+    interest: Portuguese economy, companies, labour market, housing, public finances, startups in Portugal
+    telegram_thread_id: 23
+  - name: Algarve
+    interest: Algarve regional news from dedicated local sources. Sources are already Algarve-focused—do not filter by place name.
+    ranking_mode: latest
+    telegram_thread_id: 24
+
+sources:
+  # Each source contributes its 10 latest articles to every mapped topic.
+  # International — technology (AI stories are filtered out)
+  - name: BBC Technology
+    topics: [Technology]
+    rss_url: https://feeds.bbci.co.uk/news/technology/rss.xml
+  - name: The Verge
+    topics: [Technology]
+    rss_url: https://www.theverge.com/rss/index.xml
+  - name: TechCrunch
+    topics: [Technology]
+    rss_url: https://techcrunch.com/feed/
+  - name: Ars Technica
+    topics: [Technology]
+    rss_url: https://feeds.arstechnica.com/arstechnica/technology-lab
+  - name: Wired
+    topics: [Technology]
+    rss_url: https://www.wired.com/feed/rss
+
+  # AI-only feeds
+  - name: TechCrunch AI
+    topics: [AI]
+    rss_url: https://techcrunch.com/category/artificial-intelligence/feed/
+  - name: The Verge AI
+    topics: [AI]
+    rss_url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+  - name: VentureBeat AI
+    topics: [AI]
+    rss_url: https://venturebeat.com/category/ai/feed/
+
+  # Game-focused feeds (hardware and deals are excluded by the topic rules)
+  - name: Polygon
+    topics: [Gaming]
+    rss_url: https://www.polygon.com/rss/index.xml
+  - name: IGN Games
+    topics: [Gaming]
+    rss_url: https://feeds.feedburner.com/ign/games-all
+  - name: Eurogamer News
+    topics: [Gaming]
+    rss_url: https://www.eurogamer.net/feed/news
+  - name: GameSpot
+    topics: [Gaming]
+    rss_url: https://www.gamespot.com/feeds/mashup/
+  - name: Rock Paper Shotgun
+    topics: [Gaming]
+    rss_url: https://www.rockpapershotgun.com/feed
+  - name: Gematsu
+    topics: [Gaming]
+    rss_url: https://www.gematsu.com/feed
+
+  # International — world and economy (ranking_mode: latest — feeds are already on-topic)
+  - name: BBC World
+    topics: [World news]
+    rss_url: https://feeds.bbci.co.uk/news/world/rss.xml
+  - name: NYT World
+    topics: [World news]
+    rss_url: https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+  - name: Al Jazeera
+    topics: [World news]
+    rss_url: https://www.aljazeera.com/xml/rss/all.xml
+  - name: BBC Business
+    topics: [World economy]
+    rss_url: https://feeds.bbci.co.uk/news/business/rss.xml
+  - name: NYT Business
+    topics: [World economy]
+    rss_url: https://rss.nytimes.com/services/xml/rss/nyt/Business.xml
+  - name: CNBC World Business
+    topics: [World economy]
+    rss_url: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147
+  - name: MarketWatch
+    topics: [World economy]
+    rss_url: https://feeds.content.dowjones.io/public/rss/mw_topstories
+  - name: The Economist Finance
+    topics: [World economy]
+    rss_url: https://www.economist.com/finance-and-economics/rss.xml
+
+  # Portuguese national sources (Portugal / Portugal economy only).
+  # Público blocks direct /rss (403); Feedburner mirror works.
+  - name: Observador
+    topics: [Portugal, Portugal economy]
+    rss_url: https://observador.pt/feed/
+  - name: SAPO Notícias
+    topics: [Portugal, Portugal economy]
+    rss_url: https://www.sapo.pt/rss
+  - name: ECO SAPO Notícias
+    topics: [Portugal, Portugal economy]
+    rss_url: https://eco.sapo.pt/feed/
+  - name: Jornal Económico
+    topics: [Portugal, Portugal economy]
+    rss_url: https://jornaleconomico.sapo.pt/feed/
+  - name: Público
+    topics: [Portugal, Portugal economy]
+    rss_url: https://feeds.feedburner.com/PublicoRSS
+
+  # Algarve-only regional sources (ranking_mode: latest — no place-name filter).
+  - name: Jornal do Algarve
+    topics: [Algarve]
+    rss_url: https://jornaldoalgarve.pt/feed/
+  - name: Região Sul
+    topics: [Algarve]
+    rss_url: https://regiao-sul.pt/feed/
