@@ -1,143 +1,109 @@
-import { appendFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import type { Context } from "grammy";
 import { dataDir, loadConfig, loadSecrets } from "./config/index.ts";
-import { fetchAllSources } from "./fetch/index.ts";
-import { rankItems } from "./llm/index.ts";
 import { logger } from "./lib/logger.ts";
+import { runNewsPipeline } from "./pipeline.ts";
 import { Store } from "./store/index.ts";
-import {
-  createBot,
-  postItems,
-  resolveTopicThreads,
-  sendFailureAlert,
-} from "./telegram/index.ts";
+import { createBot } from "./telegram/index.ts";
 
-function writeRunLog(entry: Record<string, unknown>): void {
-  const dir = join(dataDir(), "logs");
-  mkdirSync(dir, { recursive: true });
-  appendFileSync(join(dir, "runs.jsonl"), `${JSON.stringify(entry)}\n`, "utf8");
+function isConfiguredGroup(chat: Context["chat"], groupId: string): boolean {
+  if (!chat) return false;
+  const configured = groupId.trim();
+  if (configured.startsWith("@")) {
+    const username = configured.slice(1).toLowerCase();
+    return (chat.username?.toLowerCase() ?? "") === username;
+  }
+  return String(chat.id) === configured;
 }
 
-async function run(): Promise<void> {
-  const started = Date.now();
-  mkdirSync(join(dataDir(), "logs"), { recursive: true });
-
-  let alertBot: ReturnType<typeof createBot> | null = null;
-  let alertChat: string | undefined;
-  let totalCost = 0;
+async function isGroupAdmin(ctx: Context): Promise<boolean> {
+  if (ctx.senderChat?.id !== undefined && ctx.chat?.id !== undefined) {
+    if (ctx.senderChat.id === ctx.chat.id) return true;
+  }
 
   try {
-    const config = loadConfig();
-    const secrets = loadSecrets();
-    alertBot = createBot(secrets.telegramBotToken);
-    alertChat = secrets.telegramAlertChatId;
-
-    const store = new Store();
-    try {
-      const threadIds = resolveTopicThreads(
-        secrets.telegramGroupId,
-        config.topics,
-        store,
-      );
-
-      const fetched = await fetchAllSources(config);
-      const fresh = store.filterNew(fetched);
-
-      if (fresh.length === 0) {
-        const summary = {
-          event: "run_complete",
-          posted: 0,
-          duration_ms: Date.now() - started,
-          llm_cost: 0,
-          reason: "no_fresh_candidates",
-        };
-        logger.info(summary, "Nothing new to post");
-        writeRunLog({ ...summary, at: new Date().toISOString() });
-        return;
-      }
-
-      const { items: ranked, cost } = await rankItems(config, fresh, {
-        apiKey: secrets.openRouterApiKey,
-        model: secrets.openRouterModel,
-        threadIds,
-      });
-      totalCost = cost;
-
-      if (ranked.length === 0) {
-        const summary = {
-          event: "run_complete",
-          posted: 0,
-          duration_ms: Date.now() - started,
-          llm_cost: totalCost,
-          reason: "none_passed_threshold",
-        };
-        logger.info(summary, "No items passed relevance threshold");
-        writeRunLog({ ...summary, at: new Date().toISOString() });
-        return;
-      }
-
-      const posted = await postItems(
-        alertBot,
-        secrets.telegramGroupId,
-        ranked,
-        (group) => {
-          for (const item of group) {
-            store.markPosted(item);
-            for (const related of item.relatedItems) {
-              store.markPosted(related);
-            }
-          }
-        },
-      );
-
-      const summary = {
-        event: "run_complete",
-        posted,
-        duration_ms: Date.now() - started,
-        llm_cost: totalCost,
-        per_topic: Object.fromEntries(
-          config.topics.map((t) => [
-            t.name,
-            ranked.filter((i) => i.topic === t.name).length,
-          ]),
-        ),
-      };
-      logger.info(summary, "Run complete");
-      writeRunLog({
-        ...summary,
-        at: new Date().toISOString(),
-        items: ranked.map((i) => ({
-          id: i.id,
-          title: i.title,
-          topic: i.topic,
-          score: i.score,
-          related: i.relatedItems.map((related) => ({
-            id: related.id,
-            title: related.title,
-            source: related.source,
-          })),
-        })),
-      });
-    } finally {
-      store.close();
-    }
+    const author = await ctx.getAuthor();
+    return author.status === "creator" || author.status === "administrator";
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const summary = {
-      event: "run_failed",
-      error: message,
-      duration_ms: Date.now() - started,
-      llm_cost: totalCost,
-    };
-    logger.error(summary, "Run failed");
-    writeRunLog({ ...summary, at: new Date().toISOString() });
-
-    if (alertBot && alertChat) {
-      await sendFailureAlert(alertBot, alertChat, message);
-    }
-
-    process.exitCode = 1;
+    logger.warn(
+      { event: "admin_check_failed", error: String(err) },
+      "Failed to check group admin status",
+    );
+    return false;
   }
 }
 
-await run();
+function formatPipelineReply(
+  result: Awaited<ReturnType<typeof runNewsPipeline>>,
+): string {
+  if (!result.ok) {
+    return `News run failed: ${result.error}`;
+  }
+  if (result.reason === "no_fresh_candidates") {
+    return "Done — nothing new to post.";
+  }
+  if (result.reason === "none_passed_threshold") {
+    return "Done — no items passed the relevance threshold.";
+  }
+  return `Done — posted ${result.posted} item${result.posted === 1 ? "" : "s"}.`;
+}
+
+async function main(): Promise<void> {
+  const config = loadConfig();
+  const secrets = loadSecrets();
+  const bot = createBot(secrets.telegramBotToken);
+  const store = new Store();
+  let newsRunning = false;
+
+  bot.command("news", async (ctx) => {
+    if (!isConfiguredGroup(ctx.chat, secrets.telegramGroupId)) {
+      return;
+    }
+
+    if (!(await isGroupAdmin(ctx))) {
+      await ctx.reply("Only group admins can run /news.");
+      return;
+    }
+
+    if (newsRunning) {
+      await ctx.reply("Already getting the news. Please wait.");
+      return;
+    }
+
+    newsRunning = true;
+    try {
+      await ctx.reply("Getting the news…");
+      const result = await runNewsPipeline({ bot, store, config, secrets });
+      await ctx.reply(formatPipelineReply(result));
+    } finally {
+      newsRunning = false;
+    }
+  });
+
+  await bot.api.setMyCommands([
+    { command: "news", description: "Fetch and post latest news" },
+  ]);
+
+  process.once("SIGINT", () => bot.stop());
+  process.once("SIGTERM", () => bot.stop());
+
+  logger.info(
+    { event: "bot_starting", dataPath: dataDir() },
+    "Starting news bot (long polling)",
+  );
+
+  try {
+    await bot.start({
+      onStart: (info) => {
+        logger.info(
+          { event: "bot_started", username: info.username },
+          "Bot is running; waiting for /news",
+        );
+      },
+    });
+  } finally {
+    store.close();
+    logger.info({ event: "bot_stopped" }, "Bot stopped");
+  }
+}
+
+await main();
