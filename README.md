@@ -1,14 +1,15 @@
 # news-telegram-agent
 
-One-shot Bun pipeline: fetch RSS (scrape fallback) → dedupe → cluster and rank coverage by topic with OpenRouter → post into matching Telegram **group** topics.
+Always-on Bun Telegram bot: waits for `/news` from a group admin, then fetch RSS (scrape fallback) → dedupe → cluster and rank coverage by topic with OpenRouter → post into matching Telegram **group** topics.
 
-Runs as a portable Docker container. Schedule it with cron, QNAP Task Scheduler, or any job runner.
+Runs as a portable Docker container that stays up and listens via long polling.
 
 ## Layout
 
 ```
 src/
-  main.ts           # one-shot pipeline entrypoint
+  main.ts           # long-running bot + /news command
+  pipeline.ts       # fetch → dedupe → rank → post (triggered by /news)
   config/           # config.yaml + env/YAML loading
   fetch/            # RSS + scrape fallback
   store/            # SQLite dedupe + topic thread cache
@@ -27,14 +28,25 @@ cp .env.example .env
 
 2. Edit topics and sources in [`src/config/config.yaml`](src/config/config.yaml). Topic `name` must match your Telegram topic names exactly. Each source lists the topics it supplies; the agent fetches its 10 newest articles.
 
-3. Build and run once:
+3. Build and start (stays running):
 
 ```bash
 docker compose build
-docker compose run --rm news-agent
+docker compose up -d
 ```
 
-Logs (requests, failures, LLM tokens + OpenRouter billed `cost`) go to container stdout as JSON (pino).
+Logs (requests, failures, LLM tokens + OpenRouter billed `cost`) go to container stdout as JSON (pino). Follow with `docker compose logs -f`.
+
+## Commands
+
+| Command | Who | Effect |
+|---|---|---|
+| `/news` | Group admins only (`creator` / `administrator`) in `TELEGRAM_GROUP_ID` | Starts a news run |
+
+- If a run is already in progress, the bot replies that it is already getting the news and does not start another.
+- Other chats (DMs, other groups) are ignored.
+- BotFather **Group Privacy** can stay on (default); Telegram still delivers slash commands to the bot.
+- After editing `config.yaml`, restart the container so the new config is loaded.
 
 ## Environment
 
@@ -60,21 +72,7 @@ bun install
 DATA_PATH=./data bun run src/main.ts
 ```
 
-## Scheduling examples
-
-**cron / Linux:**
-
-```bash
-0 8,13,19 * * * cd /path/to/news-telegram-agent && docker compose run --rm news-agent
-```
-
-**QNAP Task Scheduler:** user-defined script, e.g. 08:00 / 13:00 / 19:00:
-
-```bash
-cd /share/Container/news-agent && docker compose run --rm news-agent
-```
-
-Set `DATA_DIR` in `.env` to a persistent NAS folder so dedupe survives across runs.
+The process stays running and waits for `/news`.
 
 ## Telegram setup (forum group topics)
 
@@ -84,6 +82,7 @@ This project targets a **forum-enabled group** (Topics on), not a broadcast chan
 2. Create a **group**, enable **Topics**, and allow the bot to post messages
 3. Put the bot token and group id in `.env` as `TELEGRAM_GROUP_ID` (public `@name` or numeric `-100...`)
 4. Create the topics yourself and set each topic's `telegram_thread_id` in `src/config/config.yaml`
+5. Start the bot (`docker compose up -d`) and run `/news` as a group admin
 
 Telegram Bot API cannot list existing topics by name, so the agent does not create or discover topics. A missing or invalid thread id stops the run with the missing topic name.
 
@@ -99,7 +98,7 @@ sources:
     rss_url: https://feeds.bbci.co.uk/news/technology/rss.xml
 ```
 
-Keep `DATA_DIR` persistent so topic ids survive container restarts.
+Keep `DATA_DIR` persistent so topic ids and posted-item dedupe survive container restarts.
 
 Each source contributes up to `latest_per_source` newest articles (10 by default). The model groups coverage of the same event and selects up to `top_n` story clusters **per topic**.
 
