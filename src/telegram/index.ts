@@ -1,47 +1,11 @@
-import { Bot, GrammyError } from "grammy";
+import { Bot, GrammyError, InputFile } from "grammy";
 import { logger } from "../lib/logger.ts";
 import type { RankedItem, TopicConfig } from "../lib/types.ts";
+import {
+  newsletterFilename,
+  renderNewsletterHtml,
+} from "../newsletter/index.ts";
 import type { Store } from "../store/index.ts";
-
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-export function formatMessage(item: RankedItem, index?: number): string {
-  const title = escapeHtml(item.title);
-  const source = escapeHtml(item.source);
-  const reason = escapeHtml(item.reason);
-  const prefix = index === undefined ? "" : `${index}. `;
-
-  const lines = [
-    `<b>${prefix}${title}</b>`,
-    `<a href="${escapeHtml(item.link)}">${source}</a>`,
-  ];
-
-  if (item.relatedItems.length > 0) {
-    lines.push(
-      `<b>More coverage:</b> ${item.relatedItems
-        .map(
-          (related) =>
-            `<a href="${escapeHtml(related.link)}">${escapeHtml(related.source)}</a>`,
-        )
-        .join(" · ")}`,
-    );
-  }
-
-  lines.push(`<i>${reason}</i>`);
-  return lines.join("\n");
-}
-
-export function formatTopicMessage(items: RankedItem[]): string {
-  const topic = escapeHtml(items[0]?.topic ?? "");
-  const news = items.map((item, index) => formatMessage(item, index + 1));
-  return [`<b>${topic}</b>`, ...news].join("\n\n");
-}
 
 export function createBot(token: string): Bot {
   return new Bot(token);
@@ -105,93 +69,87 @@ function isMissingTopicSendError(err: unknown): boolean {
   );
 }
 
-const TOPIC_SEND_DELAY_MS = 2_000;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Group items by topic, preserving first-seen topic order. */
-function groupByTopic(items: RankedItem[]): RankedItem[][] {
-  const order: string[] = [];
-  const groups = new Map<string, RankedItem[]>();
-
-  for (const item of items) {
-    if (!groups.has(item.topic)) {
-      order.push(item.topic);
-      groups.set(item.topic, []);
-    }
-    groups.get(item.topic)!.push(item);
-  }
-
-  return order.map((topic) => groups.get(topic)!);
-}
-
-export async function postItems(
+export async function postNewsletter(
   bot: Bot,
   groupId: string,
-  items: RankedItem[],
-  onPosted?: (group: RankedItem[]) => void,
+  opts: {
+    topics: string[];
+    items: RankedItem[];
+    messageThreadId?: number;
+    generatedAt?: Date;
+    onPosted?: (items: RankedItem[]) => void;
+  },
 ): Promise<number> {
-  let posted = 0;
-  const topicGroups = groupByTopic(items);
+  const generatedAt = opts.generatedAt ?? new Date();
+  const filename = newsletterFilename(generatedAt);
+  const html = renderNewsletterHtml({
+    topics: opts.topics,
+    items: opts.items,
+    generatedAt,
+    title: "News newsletter",
+  });
+  const caption = `News newsletter — ${opts.items.length} stor${
+    opts.items.length === 1 ? "y" : "ies"
+  } across ${opts.topics.length} topic${opts.topics.length === 1 ? "" : "s"}.`;
 
-  for (let i = 0; i < topicGroups.length; i++) {
-    if (i > 0) {
-      await sleep(TOPIC_SEND_DELAY_MS);
-    }
+  logger.info(
+    {
+      event: "telegram_newsletter_send",
+      chat: groupId,
+      threadId: opts.messageThreadId,
+      itemCount: opts.items.length,
+      filename,
+      bytes: Buffer.byteLength(html, "utf8"),
+    },
+    "Sending newsletter HTML document to Telegram",
+  );
 
-    const group = topicGroups[i]!;
-    logger.info(
+  try {
+    await bot.api.sendDocument(
+      groupId,
+      new InputFile(Buffer.from(html, "utf8"), filename),
       {
-        event: "telegram_topic_batch",
-        chat: groupId,
-        topic: group[0]?.topic,
-        count: group.length,
-        delay_ms: i > 0 ? TOPIC_SEND_DELAY_MS : 0,
+        caption,
+        ...(opts.messageThreadId !== undefined
+          ? { message_thread_id: opts.messageThreadId }
+          : {}),
       },
-      "Sending topic batch to Telegram",
     );
-
-    const first = group[0]!;
-    try {
-      await bot.api.sendMessage(groupId, formatTopicMessage(group), {
-        parse_mode: "HTML",
-        message_thread_id: first.threadId,
-        link_preview_options: { is_disabled: true },
-      });
-      posted += group.length;
-      onPosted?.(group);
-      logger.info(
-        {
-          event: "telegram_topic_post",
-          ids: group.map((item) => item.id),
-          chat: groupId,
-          topic: first.topic,
-          threadId: first.threadId,
-          itemCount: group.length,
-        },
-        "Posted news batch to Telegram topic",
+  } catch (err) {
+    logger.error(
+      {
+        event: "telegram_fail",
+        chat: groupId,
+        threadId: opts.messageThreadId,
+        ids: opts.items.map((item) => item.id),
+        error: String(err),
+      },
+      "Failed to post newsletter to Telegram",
+    );
+    if (isMissingTopicSendError(err)) {
+      throw new Error(
+        opts.messageThreadId !== undefined
+          ? `Topic thread ${opts.messageThreadId} is missing or invalid`
+          : "Failed to post newsletter: invalid thread",
       );
-    } catch (err) {
-      logger.error(
-        {
-          event: "telegram_fail",
-          ids: group.map((item) => item.id),
-          chat: groupId,
-          topic: first.topic,
-          threadId: first.threadId,
-          error: String(err),
-        },
-        "Failed to post news batch to Telegram",
-      );
-      if (isMissingTopicSendError(err)) {
-        throw missingTopicError(first.topic);
-      }
-      throw err;
     }
+    throw err;
   }
-  return posted;
+
+  opts.onPosted?.(opts.items);
+  logger.info(
+    {
+      event: "telegram_newsletter_post",
+      chat: groupId,
+      threadId: opts.messageThreadId,
+      ids: opts.items.map((item) => item.id),
+      itemCount: opts.items.length,
+      filename,
+    },
+    "Posted newsletter HTML document to Telegram",
+  );
+
+  return opts.items.length;
 }
 
 export async function sendFailureAlert(

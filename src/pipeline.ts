@@ -2,13 +2,16 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Bot } from "grammy";
 import { dataDir } from "./config/index.ts";
-import { fetchAllSources } from "./fetch/index.ts";
-import { rankItems } from "./llm/index.ts";
+import {
+  fetchItemsForTopic,
+  startSourceFetches,
+} from "./fetch/index.ts";
+import { rankTopics } from "./llm/index.ts";
 import type { AppConfig, EnvSecrets } from "./lib/schemas.ts";
 import { logger } from "./lib/logger.ts";
 import type { Store } from "./store/index.ts";
 import {
-  postItems,
+  postNewsletter,
   resolveTopicThreads,
   sendFailureAlert,
 } from "./telegram/index.ts";
@@ -28,6 +31,7 @@ export async function runNewsPipeline(opts: {
   store: Store;
   config: AppConfig;
   secrets: EnvSecrets;
+  messageThreadId?: number;
 }): Promise<PipelineResult> {
   const { bot, store, config, secrets } = opts;
   const started = Date.now();
@@ -41,10 +45,38 @@ export async function runNewsPipeline(opts: {
       store,
     );
 
-    const fetched = await fetchAllSources(config);
-    const fresh = store.filterNew(fetched);
+    const sourceFetches = startSourceFetches(config);
+    let hadFreshCandidates = false;
+    const { items: ranked, cost } = await rankTopics(
+      config,
+      async (topic) => {
+        const fetched = await fetchItemsForTopic(
+          config,
+          topic,
+          sourceFetches,
+        );
+        const fresh = store.filterNew(fetched);
+        if (fresh.length > 0) hadFreshCandidates = true;
+        logger.info(
+          {
+            event: "topic_candidates_ready",
+            topic: topic.name,
+            fetched: fetched.length,
+            fresh: fresh.length,
+          },
+          "Topic candidates ready for ranking",
+        );
+        return fresh;
+      },
+      {
+        apiKey: secrets.openRouterApiKey,
+        model: secrets.openRouterModel,
+        threadIds,
+      },
+    );
+    totalCost = cost;
 
-    if (fresh.length === 0) {
+    if (!hadFreshCandidates) {
       const summary = {
         event: "run_complete",
         posted: 0,
@@ -56,13 +88,6 @@ export async function runNewsPipeline(opts: {
       writeRunLog({ ...summary, at: new Date().toISOString() });
       return { ok: true, posted: 0, reason: "no_fresh_candidates" };
     }
-
-    const { items: ranked, cost } = await rankItems(config, fresh, {
-      apiKey: secrets.openRouterApiKey,
-      model: secrets.openRouterModel,
-      threadIds,
-    });
-    totalCost = cost;
 
     if (ranked.length === 0) {
       const summary = {
@@ -77,25 +102,26 @@ export async function runNewsPipeline(opts: {
       return { ok: true, posted: 0, reason: "none_passed_threshold" };
     }
 
-    const posted = await postItems(
-      bot,
-      secrets.telegramGroupId,
-      ranked,
-      (group) => {
-        for (const item of group) {
+    const posted = await postNewsletter(bot, secrets.telegramGroupId, {
+      topics: config.topics.map((topic) => topic.name),
+      items: ranked,
+      messageThreadId: opts.messageThreadId,
+      onPosted: (items) => {
+        for (const item of items) {
           store.markPosted(item);
           for (const related of item.relatedItems) {
             store.markPosted(related);
           }
         }
       },
-    );
+    });
 
     const summary = {
       event: "run_complete",
       posted,
       duration_ms: Date.now() - started,
       llm_cost: totalCost,
+      output: "newsletter_html",
       per_topic: Object.fromEntries(
         config.topics.map((t) => [
           t.name,

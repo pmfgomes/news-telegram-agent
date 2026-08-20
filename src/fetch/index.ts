@@ -1,7 +1,12 @@
 import * as cheerio from "cheerio";
 import Parser from "rss-parser";
 import { logger } from "../lib/logger.ts";
-import type { AppConfig, NewsItem, SourceConfig } from "../lib/types.ts";
+import type {
+  AppConfig,
+  NewsItem,
+  SourceConfig,
+  TopicConfig,
+} from "../lib/types.ts";
 
 const USER_AGENT =
   "Mozilla/5.0 (compatible; news-telegram-agent/1.0; +https://github.com/pmfgomes/news-telegram-agent)";
@@ -251,32 +256,9 @@ async function fetchSource(
   return latest;
 }
 
-export async function fetchAllSources(config: AppConfig): Promise<NewsItem[]> {
-  const results = await Promise.allSettled(
-    config.sources.map(async (source, index) => {
-      if (index > 0) await sleep(SOURCE_DELAY_MS * index);
-      return fetchSource(source, config.latest_per_source);
-    }),
-  );
+export type SourceFetches = ReadonlyMap<string, Promise<NewsItem[]>>;
 
-  const items: NewsItem[] = [];
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i]!;
-    const source = config.sources[i]!;
-    if (result.status === "fulfilled") {
-      items.push(...result.value);
-    } else {
-      logger.error(
-        {
-          event: "fetch_fail",
-          source: source.name,
-          error: String(result.reason),
-        },
-        "Source failed; continuing",
-      );
-    }
-  }
-
+function normalizeItems(items: NewsItem[], topic?: string): NewsItem[] {
   const bySourceAndLink = new Map<string, NewsItem>();
   for (const item of items) {
     const key = `${item.source}\u0000${item.link}`;
@@ -289,10 +271,88 @@ export async function fetchAllSources(config: AppConfig): Promise<NewsItem[]> {
       event: "fetch_normalize",
       rawCount: items.length,
       uniqueCount: unique.length,
-      latestPerSource: config.latest_per_source,
+      ...(topic ? { topic } : {}),
     },
     "Normalized fetch pool",
   );
+  return unique;
+}
 
+/**
+ * Start every configured source fetch immediately (with the existing stagger).
+ * Consumers can await only the sources needed by one topic.
+ */
+export function startSourceFetches(config: AppConfig): SourceFetches {
+  return new Map(
+    config.sources.map((source, index) => {
+      const promise = (async (): Promise<NewsItem[]> => {
+        if (index > 0) await sleep(SOURCE_DELAY_MS * index);
+        try {
+          return await fetchSource(source, config.latest_per_source);
+        } catch (err) {
+          logger.error(
+            {
+              event: "fetch_fail",
+              source: source.name,
+              error: String(err),
+            },
+            "Source failed; continuing",
+          );
+          return [];
+        }
+      })();
+      const entry: readonly [string, Promise<NewsItem[]>] = [
+        source.name,
+        promise,
+      ];
+      return entry;
+    }),
+  );
+}
+
+export async function fetchItemsForTopic(
+  config: AppConfig,
+  topic: TopicConfig,
+  sourceFetches: SourceFetches,
+): Promise<NewsItem[]> {
+  const topicName = topic.name.toLowerCase();
+  const relevantSources = config.sources.filter((source) =>
+    source.topics.some((name) => name.toLowerCase() === topicName),
+  );
+  const batches = await Promise.all(
+    relevantSources.map((source) => {
+      const fetchPromise = sourceFetches.get(source.name);
+      if (!fetchPromise) {
+        throw new Error(`Source fetch was not started: ${source.name}`);
+      }
+      return fetchPromise;
+    }),
+  );
+  return normalizeItems(batches.flat(), topic.name);
+}
+
+export async function fetchAllSources(config: AppConfig): Promise<NewsItem[]> {
+  const sourceFetches = startSourceFetches(config);
+  const items = (
+    await Promise.all(
+      config.sources.map((source) => {
+        const fetchPromise = sourceFetches.get(source.name);
+        if (!fetchPromise) {
+          throw new Error(`Source fetch was not started: ${source.name}`);
+        }
+        return fetchPromise;
+      }),
+    )
+  ).flat();
+
+  const unique = normalizeItems(items);
+  logger.info(
+    {
+      event: "fetch_all_done",
+      uniqueCount: unique.length,
+      latestPerSource: config.latest_per_source,
+    },
+    "Fetched all configured sources",
+  );
   return unique;
 }

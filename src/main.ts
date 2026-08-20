@@ -44,7 +44,7 @@ function formatPipelineReply(
   if (result.reason === "none_passed_threshold") {
     return "Done — no items passed the relevance threshold.";
   }
-  return `Done — posted ${result.posted} item${result.posted === 1 ? "" : "s"}.`;
+  return `Done — sent newsletter with ${result.posted} stor${result.posted === 1 ? "y" : "ies"}.`;
 }
 
 async function main(): Promise<void> {
@@ -72,7 +72,13 @@ async function main(): Promise<void> {
     newsRunning = true;
     try {
       await ctx.reply("Getting the news…");
-      const result = await runNewsPipeline({ bot, store, config, secrets });
+      const result = await runNewsPipeline({
+        bot,
+        store,
+        config,
+        secrets,
+        messageThreadId: ctx.message?.message_thread_id,
+      });
       await ctx.reply(formatPipelineReply(result));
     } finally {
       newsRunning = false;
@@ -80,7 +86,7 @@ async function main(): Promise<void> {
   });
 
   await bot.api.setMyCommands([
-    { command: "news", description: "Fetch and post latest news" },
+    { command: "news", description: "Fetch news and send HTML newsletter" },
   ]);
 
   process.once("SIGINT", () => bot.stop());

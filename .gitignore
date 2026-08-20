@@ -113,3 +113,4 @@ dist
 # TernJS port file
 .tern-port
 .history/
+.cursor/skills/verify-news-telegram-agent/evidence/

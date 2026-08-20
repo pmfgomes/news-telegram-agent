@@ -19,7 +19,8 @@ export type NewsItem = {
 
 export type RankedItem = NewsItem & {
   score: number;
-  reason: string;
+  /** Short factual blurb for the newsletter (LLM or RSS fallback). */
+  summary: string;
   topic: string;
   threadId: number;
   relatedItems: NewsItem[];
