@@ -1,2 +1,5 @@
-export { rankItems } from "./rank.ts";
-export type { RankResult } from "./rank.ts";
+export { rankItems, rankTopics } from "./rank.ts";
+export type {
+  RankResult,
+  TopicCandidatesProvider,
+} from "./rank.ts";

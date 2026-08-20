@@ -15,6 +15,29 @@ export type RankResult = {
   cost: number;
 };
 
+export type TopicCandidatesProvider = (
+  topic: TopicConfig,
+) => Promise<NewsItem[]>;
+
+function emptyRankResult(): RankResult {
+  return { items: [], cost: 0 };
+}
+
+export async function mapTopicsAsCandidatesReady<T>(
+  topics: TopicConfig[],
+  getCandidates: TopicCandidatesProvider,
+  processTopic: (
+    topic: TopicConfig,
+    candidates: NewsItem[],
+  ) => Promise<T>,
+): Promise<T[]> {
+  return Promise.all(
+    topics.map(async (topic) =>
+      processTopic(topic, await getCandidates(topic)),
+    ),
+  );
+}
+
 function topicLabel(topic: TopicConfig): string {
   return `${topic.name}: ${topic.interest}`;
 }
@@ -44,7 +67,7 @@ Topic:
 Group candidates that report the SAME concrete event or development. Choose the best article as the primary id and place other coverage in related_ids.
 Score each cluster from 0.0 to 1.0 for relevance to this topic.
 Return ONLY valid JSON with this shape:
-{"rankings":[{"id":"primary-id","related_ids":["related-id"],"topic":${JSON.stringify(topic.name)},"score":0.0,"reason":"one short sentence"}]}
+{"rankings":[{"id":"primary-id","related_ids":["related-id"],"topic":${JSON.stringify(topic.name)},"score":0.0,"summary":"one or two short factual sentences"}]}
 
 Rules:
 - topic must be exactly ${JSON.stringify(topic.name)}.
@@ -54,7 +77,7 @@ Rules:
 - related_ids may contain at most 4 other candidate ids.
 - An id must appear in only one cluster.
 - Prefer concrete, timely, high-signal stories over vague fluff.
-- Reasons must be one short sentence.
+- summary must be one or two short factual sentences about what happened; do not explain relevance.
 - ids must match the provided ids exactly.
 - Sort clusters by score descending.
 - Skip items that do not fit this topic well (omit them or give a low score).
@@ -76,7 +99,7 @@ Topic:
 
 Your only job is to deduplicate: group candidates that report the SAME concrete event, and pick the newest distinct stories.
 Return ONLY valid JSON with this shape:
-{"rankings":[{"id":"primary-id","related_ids":["related-id"],"topic":${JSON.stringify(topic.name)},"score":1.0,"reason":"one short sentence"}]}
+{"rankings":[{"id":"primary-id","related_ids":["related-id"],"topic":${JSON.stringify(topic.name)},"score":1.0,"summary":"one or two short factual sentences"}]}
 
 Rules:
 - topic must be exactly ${JSON.stringify(topic.name)}.
@@ -85,7 +108,7 @@ Rules:
 - Choose the clearest, most informative article as id; put other coverage in related_ids (at most 4).
 - An id must appear in only one cluster.
 - Score every returned cluster 1.0.
-- Reasons must be one short sentence summarizing the story.
+- summary must be one or two short factual sentences about what happened; do not explain relevance.
 - ids must match the provided ids exactly.
 - Sort clusters by recency (newest primary article first), using published timestamps when available.
 - Return at most ${topN} clusters — the newest distinct stories after deduplication.
@@ -262,11 +285,13 @@ async function rankForTopic(
     for (const related of relatedItems) {
       seen.add(related.id);
     }
+    const llmSummary = row.summary.trim();
+    const rssSummary = item.summary?.trim() ?? "";
     selected.push({
       ...item,
       topic: topic.name,
       score: topic.ranking_mode === "latest" ? 1 : row.score,
-      reason: row.reason.trim() || `Relevant to ${topic.name}.`,
+      summary: llmSummary || rssSummary || item.title,
       threadId: opts.threadId,
       relatedItems,
     });
@@ -290,19 +315,15 @@ async function rankForTopic(
   return { items: selected, cost };
 }
 
-export async function rankItems(
+export async function rankTopics(
   config: AppConfig,
-  candidates: NewsItem[],
+  getCandidates: TopicCandidatesProvider,
   opts: {
     apiKey: string;
     model: string;
     threadIds: Map<string, number>;
   },
 ): Promise<RankResult> {
-  if (candidates.length === 0) {
-    return { items: [], cost: 0 };
-  }
-
   const client = new OpenAI({
     apiKey: opts.apiKey,
     baseURL: "https://openrouter.ai/api/v1",
@@ -316,24 +337,25 @@ export async function rankItems(
     {
       event: "llm_rank_parallel_start",
       model: opts.model,
-      candidateCount: candidates.length,
       topics: config.topics.map(topicLabel),
     },
-    "Ranking topics in parallel",
+    "Ranking topics as their source fetches complete",
   );
 
   const sourceTopics = new Map(
     config.sources.map((source) => [source.name, source.topics]),
   );
-  const results = await Promise.all(
-    config.topics.map(async (topic) => {
+  const results = await mapTopicsAsCandidatesReady(
+    config.topics,
+    getCandidates,
+    async (topic, candidates) => {
       const threadId = opts.threadIds.get(topic.name);
       if (threadId === undefined) {
         logger.warn(
           { event: "llm_skip_topic_no_thread", topic: topic.name },
           "Skipping topic with no Telegram thread id",
         );
-        return { items: [] as RankedItem[], cost: 0 };
+        return emptyRankResult();
       }
 
       const topicCandidates = candidatesForTopic(
@@ -347,7 +369,7 @@ export async function rankItems(
           { event: "llm_skip_topic_no_candidates", topic: topic.name },
           "Skipping topic with no mapped candidates",
         );
-        return { items: [] as RankedItem[], cost: 0 };
+        return emptyRankResult();
       }
 
       return rankForTopic(client, topic, topicCandidates, {
@@ -356,7 +378,7 @@ export async function rankItems(
         topN: config.top_n,
         threadId,
       });
-    }),
+    },
   );
 
   const ranked = results.flatMap((r) => r.items);
@@ -380,4 +402,19 @@ export async function rankItems(
   );
 
   return { items: ranked, cost };
+}
+
+export async function rankItems(
+  config: AppConfig,
+  candidates: NewsItem[],
+  opts: {
+    apiKey: string;
+    model: string;
+    threadIds: Map<string, number>;
+  },
+): Promise<RankResult> {
+  if (candidates.length === 0) {
+    return { items: [], cost: 0 };
+  }
+  return rankTopics(config, async () => candidates, opts);
 }

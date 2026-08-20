@@ -5,10 +5,14 @@
   "private": true,
   "scripts": {
     "start": "bun run src/main.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "build:newsletter-css": "bunx @tailwindcss/cli -i ./src/newsletter/input.css -o ./src/newsletter/styles.css --minify"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
     "@types/bun": "^1.3.14",
+    "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2"
   },
   "dependencies": {

@@ -115,7 +115,7 @@ export const llmRankRowSchema = z.object({
   related_ids: z.array(z.string().min(1)).default([]),
   topic: z.string().min(1),
   score: z.coerce.number(),
-  reason: z.string().optional().default(""),
+  summary: z.string().optional().default(""),
 });
 
 export const llmRankResponseSchema = z.object({

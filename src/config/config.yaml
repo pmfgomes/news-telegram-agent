@@ -1,7 +1,7 @@
 timezone: Europe/Lisbon
 latest_per_source: 10
 max_candidates: 60
-# Max posts per Telegram topic each run
+# Max story clusters per topic each run (included in the newsletter)
 top_n: 10
 relevance_threshold: 0.6
 

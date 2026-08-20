@@ -1,6 +1,6 @@
 # news-telegram-agent
 
-Always-on Bun Telegram bot: waits for `/news` from a group admin, then fetch RSS (scrape fallback) → dedupe → cluster and rank coverage by topic with OpenRouter → post into matching Telegram **group** topics.
+Always-on Bun Telegram bot: waits for `/news` from a group admin, then fetch RSS (scrape fallback) → dedupe → cluster and rank coverage by topic with OpenRouter → send one self-contained **HTML newsletter** document into the Telegram thread where `/news` was run.
 
 Runs as a portable Docker container that stays up and listens via long polling.
 
@@ -9,12 +9,13 @@ Runs as a portable Docker container that stays up and listens via long polling.
 ```
 src/
   main.ts           # long-running bot + /news command
-  pipeline.ts       # fetch → dedupe → rank → post (triggered by /news)
+  pipeline.ts       # fetch → dedupe → rank → newsletter (triggered by /news)
   config/           # config.yaml + env/YAML loading
   fetch/            # RSS + scrape fallback
   store/            # SQLite dedupe + topic thread cache
   llm/              # OpenRouter rank + billed usage/cost
-  telegram/         # topic resolution, posts, failure alerts
+  newsletter/       # Tailwind HTML newsletter renderer
+  telegram/         # topic resolution, document send, failure alerts
   lib/              # shared logger, Zod schemas, types
 ```
 
@@ -41,12 +42,14 @@ Logs (requests, failures, LLM tokens + OpenRouter billed `cost`) go to container
 
 | Command | Who | Effect |
 |---|---|---|
-| `/news` | Group admins only (`creator` / `administrator`) in `TELEGRAM_GROUP_ID` | Starts a news run |
+| `/news` | Group admins only (`creator` / `administrator`) in `TELEGRAM_GROUP_ID` | Starts a news run and sends an HTML newsletter attachment |
 
 - If a run is already in progress, the bot replies that it is already getting the news and does not start another.
 - Other chats (DMs, other groups) are ignored.
 - BotFather **Group Privacy** can stay on (default); Telegram still delivers slash commands to the bot.
 - After editing `config.yaml`, restart the container so the new config is loaded.
+- The newsletter is a downloadable `.html` file with topic tabs. Open it in a browser; Telegram does not render the page inline.
+- After changing newsletter Tailwind classes, run `bun run build:newsletter-css` and commit `src/newsletter/styles.css` (the production image does not run Tailwind).
 
 ## Environment
 
@@ -101,6 +104,11 @@ sources:
 Keep `DATA_DIR` persistent so topic ids and posted-item dedupe survive container restarts.
 
 Each source contributes up to `latest_per_source` newest articles (10 by default). The model groups coverage of the same event and selects up to `top_n` story clusters **per topic**.
+
+Source fetches run concurrently with a 250 ms start stagger. A topic begins its
+OpenRouter grouping and ranking as soon as all sources mapped to that topic
+finish; it does not wait for unrelated topic sources. All topic ranking calls
+can therefore overlap while slower feeds are still downloading.
 
 ### Config YAML vs SQLite
 
