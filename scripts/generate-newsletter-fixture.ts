@@ -19,11 +19,14 @@ function item(
 }
 
 const topics = [
-  "Portugal",
+  "Technology",
   "AI",
   "Gaming",
-  "Technology",
   "World news",
+  "World economy",
+  "Portugal",
+  "Portugal economy",
+  "Algarve",
 ] as const;
 
 const storyBlueprints: Record<
@@ -103,6 +106,51 @@ const storyBlueprints: Record<
       "Health agency tracks new regional outbreak",
       "Court blocks emergency surveillance decree",
       "Aid convoy reaches cut-off town after deal",
+    ],
+  },
+  "World economy": {
+    source: "CNBC",
+    titles: [
+      "Central banks signal coordinated rate path",
+      "Global supply chains adapt to tariff shifts",
+      "Oil prices steady after OPEC+ meeting",
+      "IMF revises global growth outlook upward",
+      "Dollar strengthens as markets eye inflation data",
+      "EU unveils competitiveness fund for industry",
+      "Asian markets rally on tech earnings beat",
+      "Shipping costs fall as canal routes reopen",
+      "Sovereign debt auctions draw strong demand",
+      "Trade ministers reach digital services accord",
+    ],
+  },
+  "Portugal economy": {
+    source: "ECO",
+    titles: [
+      "Lisbon office rents climb to record highs",
+      "Auto parts exports rise despite slowdown",
+      "Government unveils corporate tax reduction plan",
+      "Tourism revenue beats summer expectations",
+      "Startups attract record venture funding round",
+      "Unemployment falls to lowest since 2002",
+      "Banks report rising mortgage demand",
+      "Renewable auctions secure below-market prices",
+      "Retail sales grow for third straight quarter",
+      "Public debt ratio drops below 100 percent",
+    ],
+  },
+  Algarve: {
+    source: "Região Sul",
+    titles: [
+      "Faro airport expands winter flight schedule",
+      "Albufeira approves coastal walkway extension",
+      "Water reserves rise after autumn rainfall",
+      "Lagos marina hosts international sailing regatta",
+      "Regional hotels report record October occupancy",
+      "New cycling route links eastern Algarve towns",
+      "Fishing quotas bring relief to Olhão fleet",
+      "Tavira restores historic market hall",
+      "Golf courses invest in recycled irrigation",
+      "Citrus harvest starts early in Silves orchards",
     ],
   },
 };
