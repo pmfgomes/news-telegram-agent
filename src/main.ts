@@ -38,13 +38,17 @@ function formatPipelineReply(
   if (!result.ok) {
     return `News run failed: ${result.error}`;
   }
+  const failed =
+    result.rankingFailedTopics.length > 0
+      ? ` Ranking failed for ${result.rankingFailedTopics.join(", ")}.`
+      : "";
   if (result.reason === "no_fresh_candidates") {
-    return "Done — nothing new to post.";
+    return `Done - nothing new to post.${failed}`;
   }
   if (result.reason === "none_passed_threshold") {
-    return "Done — no items passed the relevance threshold.";
+    return `Done - no items passed the relevance threshold.${failed}`;
   }
-  return `Done — sent newsletter with ${result.posted} stor${result.posted === 1 ? "y" : "ies"}.`;
+  return `Done - sent newsletter with ${result.posted} stor${result.posted === 1 ? "y" : "ies"}.${failed}`;
 }
 
 async function main(): Promise<void> {
