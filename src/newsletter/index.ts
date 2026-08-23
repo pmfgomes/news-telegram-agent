@@ -214,12 +214,9 @@ export function renderNewsletterHtml(opts: RenderNewsletterOptions): string {
 </head>
 <body>
   <div class="app-shell mx-auto flex w-full max-w-5xl flex-col gap-2.5 px-3 py-2.5 md:gap-3 md:px-6 md:py-4 lg:max-w-6xl lg:px-8">
-    <header class="flex shrink-0 flex-wrap items-end justify-between gap-x-6 gap-y-1 px-1">
-      <div class="min-w-0">
-        <p class="flex items-center gap-2 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-sky-400 md:text-xs"><span class="inline-block size-1.5 rounded-full bg-sky-400"></span>Newsletter</p>
-        <h1 class="mt-1 truncate text-xl font-bold tracking-tight text-zinc-50 md:text-2xl">${escapeHtml(title)}</h1>
-      </div>
-      <p class="shrink-0 text-xs text-zinc-500 md:text-sm">${escapeHtml(dateLabel)} · ${totalStories} stor${totalStories === 1 ? "y" : "ies"}</p>
+    <header class="flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-1 px-1">
+      <h1 class="flex items-center gap-2 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-sky-400 md:text-xs"><span class="inline-block size-1.5 rounded-full bg-sky-400"></span>Newsletter</h1>
+      <p class="shrink-0 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-sky-400 md:text-xs">${escapeHtml(dateLabel)} · ${totalStories} stor${totalStories === 1 ? "y" : "ies"}</p>
     </header>
 
     <nav class="tab-bar" role="tablist" aria-label="Topics">
