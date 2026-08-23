@@ -175,6 +175,7 @@ const html = renderNewsletterHtml({
   items,
   generatedAt: new Date("2026-08-20T18:30:00+01:00"),
   title: "News newsletter",
+  cost: 0.004821,
 });
 
 const outDir = join("data", "exports");

@@ -36,7 +36,7 @@ docker compose build
 docker compose up -d
 ```
 
-Logs (requests, failures, LLM tokens + OpenRouter billed `cost`) go to container stdout as JSON (pino). Follow with `docker compose logs -f`.
+Logs (requests, failures, LLM tokens + OpenRouter billed `cost`) go to container stdout as JSON (pino). Follow with `docker compose logs -f`. During `/news`, the bot also replies with each OpenRouter charge and a total; the HTML newsletter shows that total after the title.
 
 ## Commands
 

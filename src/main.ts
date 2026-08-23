@@ -4,6 +4,10 @@ import { logger } from "./lib/logger.ts";
 import { runNewsPipeline } from "./pipeline.ts";
 import { Store } from "./store/index.ts";
 import { createBot } from "./telegram/index.ts";
+import {
+  formatOpenRouterChargeLine,
+  formatPipelineReply,
+} from "./telegram/replies.ts";
 
 function isConfiguredGroup(chat: Context["chat"], groupId: string): boolean {
   if (!chat) return false;
@@ -32,25 +36,6 @@ async function isGroupAdmin(ctx: Context): Promise<boolean> {
   }
 }
 
-function formatPipelineReply(
-  result: Awaited<ReturnType<typeof runNewsPipeline>>,
-): string {
-  if (!result.ok) {
-    return `News run failed: ${result.error}`;
-  }
-  const failed =
-    result.rankingFailedTopics.length > 0
-      ? ` Ranking failed for ${result.rankingFailedTopics.join(", ")}.`
-      : "";
-  if (result.reason === "no_fresh_candidates") {
-    return `Done - nothing new to post.${failed}`;
-  }
-  if (result.reason === "none_passed_threshold") {
-    return `Done - no items passed the relevance threshold.${failed}`;
-  }
-  return `Done - sent newsletter with ${result.posted} stor${result.posted === 1 ? "y" : "ies"}.${failed}`;
-}
-
 async function main(): Promise<void> {
   const config = loadConfig();
   const secrets = loadSecrets();
@@ -76,13 +61,32 @@ async function main(): Promise<void> {
     newsRunning = true;
     try {
       await ctx.reply("Getting the news…");
+      let chargeReports = Promise.resolve();
       const result = await runNewsPipeline({
         bot,
         store,
         config,
         secrets,
         messageThreadId: ctx.message?.message_thread_id,
+        onOpenRouterCharge: (charge) => {
+          chargeReports = chargeReports.then(async () => {
+            try {
+              await ctx.reply(formatOpenRouterChargeLine(charge));
+            } catch (err) {
+              logger.warn(
+                {
+                  event: "openrouter_charge_reply_failed",
+                  topic: charge.topic,
+                  error: String(err),
+                },
+                "Failed to send OpenRouter charge to Telegram",
+              );
+            }
+          });
+          return chargeReports;
+        },
       });
+      await chargeReports;
       await ctx.reply(formatPipelineReply(result));
     } finally {
       newsRunning = false;
