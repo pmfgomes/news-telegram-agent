@@ -108,9 +108,13 @@ describe("renderNewsletterHtml", () => {
     expect(html).toContain('aria-selected="true"');
     expect(html).toContain("data-tab=");
     expect(html).toContain("history.replaceState");
-    expect(html).toContain("max-w-4xl");
-    expect(html).toContain("md:text-4xl");
-    expect(html).toContain("md:px-7");
+    expect(html).toContain("app-shell");
+    expect(html).toContain("tab-bar");
+    expect(html).toContain("tab-count");
+    expect(html).toContain("story-list");
+    expect(html).toContain("story-card");
+    expect(html).toContain("story-rank");
+    expect(html).toContain("story-open");
   });
 
   test("omits unsafe article hrefs", () => {

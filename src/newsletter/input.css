@@ -3,30 +3,82 @@
 @source "./index.ts";
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 @layer base {
+  :root {
+    color-scheme: dark;
+  }
+
   html {
     @apply antialiased;
   }
 
   body {
-    @apply m-0 bg-zinc-100 font-sans text-zinc-900;
+    @apply m-0 overflow-hidden font-sans text-zinc-100;
+    background-color: var(--color-zinc-950);
+    background-image:
+      radial-gradient(
+        ellipse 90% 55% at 50% -20%,
+        rgb(56 189 248 / 0.09),
+        transparent
+      ),
+      radial-gradient(
+        ellipse 60% 45% at 85% 110%,
+        rgb(56 189 248 / 0.05),
+        transparent
+      );
+  }
+
+  ::selection {
+    background: rgb(56 189 248 / 0.28);
   }
 }
 
 @layer components {
+  /* Viewport-fitted shell: 100dvh where supported, 100vh fallback. Written
+     with @supports because the minifier drops duplicate declarations. */
+  .app-shell {
+    height: 100vh;
+  }
+
+  @supports (height: 100dvh) {
+    .app-shell {
+      height: 100dvh;
+    }
+  }
+
+  .tab-bar {
+    @apply flex shrink-0 flex-nowrap items-center gap-1 overflow-x-auto rounded-xl
+      border border-zinc-800/80 bg-zinc-900/60 p-1;
+    scrollbar-width: none;
+  }
+
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+
   .tab-link {
-    @apply rounded-md px-3 py-2 text-sm font-semibold text-zinc-600 transition
-      hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none
-      focus-visible:ring-2 focus-visible:ring-sky-500
-      md:rounded-lg md:px-4 md:py-2.5 md:text-base;
+    @apply whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium
+      text-zinc-400 transition-colors hover:text-zinc-100
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500
+      md:px-3.5 md:py-2;
   }
 
   .tab-link[aria-selected="true"] {
-    @apply bg-zinc-900 text-white hover:bg-zinc-800 hover:text-white;
+    @apply bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-500/30
+      hover:text-sky-200;
+  }
+
+  .tab-count {
+    @apply ml-1.5 rounded-md bg-zinc-800/90 px-1.5 py-0.5 align-middle
+      text-[0.65rem] font-semibold tabular-nums text-zinc-500;
+  }
+
+  .tab-link[aria-selected="true"] .tab-count {
+    @apply bg-sky-500/20 text-sky-200;
   }
 
   .topic-panel {
@@ -34,32 +86,82 @@
   }
 
   .topic-panel.is-active {
-    @apply block;
+    @apply flex min-h-0 flex-1 flex-col;
   }
 
-  .story-row {
-    @apply flex gap-3 border-b border-zinc-800 px-4 py-3 last:border-b-0
-      md:gap-5 md:px-7 md:py-5;
+  .story-list {
+    @apply flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto
+      overscroll-contain py-0.5 pr-0.5;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-zinc-700) transparent;
+  }
+
+  .story-list::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .story-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .story-list::-webkit-scrollbar-thumb {
+    background: var(--color-zinc-700);
+    border-radius: 999px;
+  }
+
+  /* Cards grow to fill tall viewports (capped) and never shrink below their
+     content, so short screens scroll instead of clipping. */
+  .story-card {
+    @apply flex max-h-40 shrink-0 grow items-start gap-3 rounded-xl border
+      border-zinc-800/70 bg-zinc-900/50 px-3.5 py-2.5 transition-colors
+      hover:border-zinc-700/90 hover:bg-zinc-900 md:gap-4 md:px-4;
+  }
+
+  .story-rank {
+    @apply mt-0.5 w-6 shrink-0 text-right font-mono text-[0.7rem] font-medium
+      tabular-nums text-zinc-600 select-none md:text-xs;
   }
 
   .story-title {
-    @apply text-base font-semibold leading-snug text-sky-400
-      hover:text-sky-300 hover:underline focus-visible:outline-none
-      focus-visible:ring-2 focus-visible:ring-sky-500
-      md:text-xl md:leading-snug;
+    @apply line-clamp-2 text-sm leading-snug font-semibold text-zinc-50
+      transition-colors hover:text-sky-300 focus-visible:outline-none
+      focus-visible:ring-2 focus-visible:ring-sky-500 md:line-clamp-1
+      md:text-base;
   }
 
   .story-summary {
-    @apply mt-1 text-sm leading-relaxed text-zinc-300 md:mt-2 md:text-base;
+    @apply mt-1 line-clamp-1 text-xs leading-relaxed text-zinc-400 md:mt-1.5
+      md:line-clamp-2 md:text-sm md:leading-snug;
   }
 
   .story-meta {
-    @apply mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500
-      md:mt-3 md:gap-3 md:text-sm;
+    @apply mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.7rem]
+      text-zinc-500 md:mt-2 md:text-xs;
   }
 
   .source-pill {
-    @apply inline-flex items-center rounded-full bg-zinc-800 px-2.5 py-1
-      font-medium text-zinc-200 md:px-3 md:py-1.5;
+    @apply inline-flex items-center rounded-full border border-zinc-700/70
+      bg-zinc-800/60 px-2 py-0.5 font-medium text-zinc-300;
+  }
+
+  .story-open {
+    @apply inline-flex items-center gap-1 font-medium text-zinc-500
+      underline-offset-2 transition-colors hover:text-sky-300 hover:underline
+      focus-visible:outline-none focus-visible:ring-2
+      focus-visible:ring-sky-500;
+  }
+
+  .empty-state {
+    @apply flex flex-1 items-center justify-center rounded-xl border
+      border-dashed border-zinc-800 text-sm text-zinc-500;
+  }
+}
+
+/* Keep all 10 cards on screen when desktop viewport height is tight
+   (browser chrome on a 1440p monitor): summaries drop to one line. */
+@media (min-width: 48rem) and (max-height: 86rem) {
+  .story-summary {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
   }
 }

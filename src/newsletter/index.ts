@@ -90,16 +90,18 @@ function storySummary(item: RankedItem): string {
   return "No summary available.";
 }
 
-function renderStory(item: RankedItem): string {
+function renderStory(item: RankedItem, index: number): string {
   const href = safeHref(item.link);
   const title = escapeHtml(item.title);
   const summary = escapeHtml(storySummary(item));
   const source = escapeHtml(item.source);
+  const rank = String(index + 1).padStart(2, "0");
   const titleHtml = href
     ? `<a class="story-title" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${title}</a>`
     : `<span class="story-title">${title}</span>`;
 
-  return `<article class="story-row">
+  return `<article class="story-card">
+  <span class="story-rank">${rank}</span>
   <div class="min-w-0 flex-1">
     ${titleHtml}
     <p class="story-summary">${summary}</p>
@@ -107,7 +109,7 @@ function renderStory(item: RankedItem): string {
       <span class="source-pill">${source}</span>
       ${
         href
-          ? `<a class="text-zinc-400 underline-offset-2 hover:text-zinc-200 hover:underline md:text-sm" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Open article</a>`
+          ? `<a class="story-open" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Open article</a>`
           : ""
       }
     </div>
@@ -127,7 +129,7 @@ function renderTabs(sections: NewsletterTopicSection[]): string {
         aria-controls="${escapeHtml(section.slug)}"
         aria-selected="${selected}"
         data-tab="${escapeHtml(section.slug)}"
-      >${escapeHtml(section.name)}</a>`;
+      >${escapeHtml(section.name)}<span class="tab-count">${section.items.length}</span></a>`;
     })
     .join("\n");
 }
@@ -139,8 +141,8 @@ function renderPanels(sections: NewsletterTopicSection[]): string {
       const hidden = index === 0 ? "false" : "true";
       const body =
         section.items.length === 0
-          ? `<p class="px-5 py-8 text-sm text-zinc-400 md:px-7 md:py-12 md:text-base">No stories for this topic in this edition.</p>`
-          : section.items.map(renderStory).join("\n");
+          ? `<div class="empty-state">No stories for this topic in this edition.</div>`
+          : `<div class="story-list">${section.items.map(renderStory).join("\n")}</div>`;
 
       return `<section
   class="topic-panel${active}"
@@ -149,13 +151,7 @@ function renderPanels(sections: NewsletterTopicSection[]): string {
   aria-labelledby="tab-${escapeHtml(section.slug)}"
   data-panel="${escapeHtml(section.slug)}"
   aria-hidden="${hidden}"
->
-  <header class="border-b border-zinc-800 px-5 py-3 md:px-7 md:py-4">
-    <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-400 md:text-base">${escapeHtml(section.name)}</h2>
-    <p class="mt-0.5 text-xs text-zinc-500 md:text-sm">${section.items.length} stor${section.items.length === 1 ? "y" : "ies"}</p>
-  </header>
-  <div>${body}</div>
-</section>`;
+>${body}</section>`;
     })
     .join("\n");
 }
@@ -217,26 +213,20 @@ export function renderNewsletterHtml(opts: RenderNewsletterOptions): string {
   <style>${styles}</style>
 </head>
 <body>
-  <div class="mx-auto min-h-screen w-full max-w-4xl px-3 py-5 md:px-6 md:py-10 lg:max-w-5xl lg:px-8 lg:py-12">
-    <header class="mb-4 md:mb-6">
-      <p class="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500 md:text-sm">Newsletter</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-zinc-900 md:text-4xl">${escapeHtml(title)}</h1>
-      <p class="mt-1 text-sm text-zinc-500 md:mt-2 md:text-base">${escapeHtml(dateLabel)} · ${totalStories} stor${totalStories === 1 ? "y" : "ies"}</p>
+  <div class="app-shell mx-auto flex w-full max-w-5xl flex-col gap-2.5 px-3 py-2.5 md:gap-3 md:px-6 md:py-4 lg:max-w-6xl lg:px-8">
+    <header class="flex shrink-0 flex-wrap items-end justify-between gap-x-6 gap-y-1 px-1">
+      <div class="min-w-0">
+        <p class="flex items-center gap-2 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-sky-400 md:text-xs"><span class="inline-block size-1.5 rounded-full bg-sky-400"></span>Newsletter</p>
+        <h1 class="mt-1 truncate text-xl font-bold tracking-tight text-zinc-50 md:text-2xl">${escapeHtml(title)}</h1>
+      </div>
+      <p class="shrink-0 text-xs text-zinc-500 md:text-sm">${escapeHtml(dateLabel)} · ${totalStories} stor${totalStories === 1 ? "y" : "ies"}</p>
     </header>
 
-    <div class="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm md:rounded-3xl">
-      <nav
-        class="sticky top-0 z-10 flex flex-wrap gap-1 border-b border-zinc-200 bg-white/95 px-3 py-2 backdrop-blur md:gap-2 md:px-5 md:py-3"
-        role="tablist"
-        aria-label="Topics"
-      >
+    <nav class="tab-bar" role="tablist" aria-label="Topics">
 ${renderTabs(sections)}
-      </nav>
+    </nav>
 
-      <div class="bg-zinc-950 text-zinc-100">
 ${renderPanels(sections)}
-      </div>
-    </div>
   </div>
   <script>${TAB_SCRIPT}</script>
 </body>
