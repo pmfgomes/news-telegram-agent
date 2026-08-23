@@ -134,4 +134,24 @@ describe("renderNewsletterHtml", () => {
     expect(html).not.toContain("javascript:");
     expect(html).toContain("<span class=\"story-title\">Bad link</span>");
   });
+
+  test("shows billed cost after the title", () => {
+    const html = renderNewsletterHtml({
+      topics: ["AI"],
+      items: [
+        item({
+          id: "1",
+          title: "A story",
+          topic: "AI",
+        }),
+      ],
+      stylesCss: STYLES,
+      cost: 0.001234,
+    });
+
+    const titleAt = html.indexOf(">Newsletter</h1>");
+    const costAt = html.indexOf("Cost $0.001234");
+    expect(titleAt).toBeGreaterThan(-1);
+    expect(costAt).toBeGreaterThan(titleAt);
+  });
 });

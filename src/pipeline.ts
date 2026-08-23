@@ -7,6 +7,7 @@ import {
   startSourceFetches,
 } from "./fetch/index.ts";
 import { rankTopics } from "./llm/index.ts";
+import type { OpenRouterCharge } from "./llm/rank.ts";
 import type { AppConfig, EnvSecrets } from "./lib/schemas.ts";
 import { logger } from "./lib/logger.ts";
 import type { Store } from "./store/index.ts";
@@ -22,8 +23,9 @@ export type PipelineResult =
       posted: number;
       reason?: "no_fresh_candidates" | "none_passed_threshold";
       rankingFailedTopics: string[];
+      charges: OpenRouterCharge[];
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; charges: OpenRouterCharge[] };
 
 function writeRunLog(entry: Record<string, unknown>): void {
   const dir = join(dataDir(), "logs");
@@ -37,11 +39,13 @@ export async function runNewsPipeline(opts: {
   config: AppConfig;
   secrets: EnvSecrets;
   messageThreadId?: number;
+  onOpenRouterCharge?: (charge: OpenRouterCharge) => void | Promise<void>;
 }): Promise<PipelineResult> {
   const { bot, store, config, secrets } = opts;
   const started = Date.now();
   mkdirSync(join(dataDir(), "logs"), { recursive: true });
   let totalCost = 0;
+  const charges: OpenRouterCharge[] = [];
 
   try {
     const threadIds = resolveTopicThreads(
@@ -52,7 +56,7 @@ export async function runNewsPipeline(opts: {
 
     const sourceFetches = startSourceFetches(config);
     let hadFreshCandidates = false;
-    const { items: ranked, cost, errors } = await rankTopics(
+    const { items: ranked, cost, errors, charges: rankedCharges } = await rankTopics(
       config,
       async (topic) => {
         const fetched = await fetchItemsForTopic(
@@ -77,9 +81,26 @@ export async function runNewsPipeline(opts: {
         apiKey: secrets.openRouterApiKey,
         model: secrets.openRouterModel,
         threadIds,
+        onCharge: async (charge) => {
+          charges.push(charge);
+          try {
+            await opts.onOpenRouterCharge?.(charge);
+          } catch (err) {
+            logger.warn(
+              {
+                event: "openrouter_charge_report_failed",
+                topic: charge.topic,
+                error: String(err),
+              },
+              "Failed to report OpenRouter charge to Telegram",
+            );
+          }
+        },
       },
     );
     totalCost = cost;
+    const billedCharges =
+      rankedCharges.length > 0 ? rankedCharges : [...charges];
     const rankingFailedTopics = errors.map((error) => error.topic);
 
     if (!hadFreshCandidates) {
@@ -88,6 +109,7 @@ export async function runNewsPipeline(opts: {
         posted: 0,
         duration_ms: Date.now() - started,
         llm_cost: 0,
+        llm_charges: billedCharges,
         reason: "no_fresh_candidates" as const,
       };
       logger.info(summary, "Nothing new to post");
@@ -97,6 +119,7 @@ export async function runNewsPipeline(opts: {
         posted: 0,
         reason: "no_fresh_candidates",
         rankingFailedTopics,
+        charges: billedCharges,
       };
     }
 
@@ -111,6 +134,7 @@ export async function runNewsPipeline(opts: {
         posted: 0,
         duration_ms: Date.now() - started,
         llm_cost: totalCost,
+        llm_charges: billedCharges,
         reason: "none_passed_threshold" as const,
       };
       logger.info(summary, "No items passed relevance threshold");
@@ -120,6 +144,7 @@ export async function runNewsPipeline(opts: {
         posted: 0,
         reason: "none_passed_threshold",
         rankingFailedTopics,
+        charges: billedCharges,
       };
     }
 
@@ -127,6 +152,7 @@ export async function runNewsPipeline(opts: {
       topics: config.topics.map((topic) => topic.name),
       items: ranked,
       messageThreadId: opts.messageThreadId,
+      cost: totalCost,
       onPosted: (items) => {
         for (const item of items) {
           store.markPosted(item);
@@ -142,6 +168,7 @@ export async function runNewsPipeline(opts: {
       posted,
       duration_ms: Date.now() - started,
       llm_cost: totalCost,
+      llm_charges: billedCharges,
       output: "newsletter_html",
       ranking_failed_topics: rankingFailedTopics,
       per_topic: Object.fromEntries(
@@ -168,7 +195,7 @@ export async function runNewsPipeline(opts: {
       })),
     });
 
-    return { ok: true, posted, rankingFailedTopics };
+    return { ok: true, posted, rankingFailedTopics, charges: billedCharges };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const summary = {
@@ -176,6 +203,7 @@ export async function runNewsPipeline(opts: {
       error: message,
       duration_ms: Date.now() - started,
       llm_cost: totalCost,
+      llm_charges: charges,
     };
     logger.error(summary, "Run failed");
     writeRunLog({ ...summary, at: new Date().toISOString() });
@@ -184,6 +212,6 @@ export async function runNewsPipeline(opts: {
       await sendFailureAlert(bot, secrets.telegramAlertChatId, message);
     }
 
-    return { ok: false, error: message };
+    return { ok: false, error: message, charges };
   }
 }

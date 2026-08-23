@@ -1,4 +1,5 @@
 import { Bot, GrammyError, InputFile } from "grammy";
+import { formatUsd } from "../lib/money.ts";
 import { logger } from "../lib/logger.ts";
 import type { RankedItem, TopicConfig } from "../lib/types.ts";
 import {
@@ -77,20 +78,23 @@ export async function postNewsletter(
     items: RankedItem[];
     messageThreadId?: number;
     generatedAt?: Date;
+    cost?: number;
     onPosted?: (items: RankedItem[]) => void;
   },
 ): Promise<number> {
   const generatedAt = opts.generatedAt ?? new Date();
   const filename = newsletterFilename(generatedAt);
+  const cost = opts.cost ?? 0;
   const html = renderNewsletterHtml({
     topics: opts.topics,
     items: opts.items,
     generatedAt,
     title: "News newsletter",
+    cost,
   });
   const caption = `News newsletter — ${opts.items.length} stor${
     opts.items.length === 1 ? "y" : "ies"
-  } across ${opts.topics.length} topic${opts.topics.length === 1 ? "" : "s"}.`;
+  } across ${opts.topics.length} topic${opts.topics.length === 1 ? "" : "s"}. Cost ${formatUsd(cost)}.`;
 
   logger.info(
     {

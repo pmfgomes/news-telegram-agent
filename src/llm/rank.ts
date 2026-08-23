@@ -14,10 +14,20 @@ export type RankTopicError = {
   error: string;
 };
 
+export type OpenRouterCharge = {
+  topic: string;
+  model: string;
+  generationId: string;
+  cost: number;
+  promptTokens: number;
+  completionTokens: number;
+};
+
 export type RankResult = {
   items: RankedItem[];
   /** Exact cost from OpenRouter usage.cost (credits charged). */
   cost: number;
+  charges: OpenRouterCharge[];
   errors: RankTopicError[];
 };
 
@@ -29,7 +39,7 @@ export type TopicCandidatesProvider = (
 ) => Promise<NewsItem[]>;
 
 function emptyRankResult(): RankResult {
-  return { items: [], cost: 0, errors: [] };
+  return { items: [], cost: 0, charges: [], errors: [] };
 }
 
 export async function mapTopicsAsCandidatesReady<T>(
@@ -233,6 +243,7 @@ async function rankForTopic(
     threshold: number;
     topN: number;
     threadId: number;
+    onCharge?: (charge: OpenRouterCharge) => void | Promise<void>;
   },
 ): Promise<RankResult> {
   const started = Date.now();
@@ -317,6 +328,27 @@ async function rankForTopic(
     "OpenRouter billed cost",
   );
 
+  const charge: OpenRouterCharge = {
+    topic: topic.name,
+    model: opts.model,
+    generationId: completion.id ?? "",
+    cost,
+    promptTokens,
+    completionTokens,
+  };
+  try {
+    await opts.onCharge?.(charge);
+  } catch (err) {
+    logger.warn(
+      {
+        event: "llm_charge_notify_failed",
+        topic: topic.name,
+        error: String(err),
+      },
+      "Failed to notify OpenRouter charge",
+    );
+  }
+
   let parsed: LlmRankRow[];
   try {
     parsed = parseRankings(content);
@@ -336,7 +368,12 @@ async function rankForTopic(
       },
       "Failed to parse LLM ranking JSON",
     );
-    return { items: [], cost, errors: [{ topic: topic.name, error }] };
+    return {
+      items: [],
+      cost,
+      charges: [charge],
+      errors: [{ topic: topic.name, error }],
+    };
   }
 
   const rankings = parsed
@@ -399,7 +436,7 @@ async function rankForTopic(
     "Selected top story clusters for topic",
   );
 
-  return { items: selected, cost, errors: [] };
+  return { items: selected, cost, charges: [charge], errors: [] };
 }
 
 export async function rankTopics(
@@ -409,6 +446,7 @@ export async function rankTopics(
     apiKey: string;
     model: string;
     threadIds: Map<string, number>;
+    onCharge?: (charge: OpenRouterCharge) => void | Promise<void>;
   },
 ): Promise<RankResult> {
   const client = new OpenAI({
@@ -465,6 +503,7 @@ export async function rankTopics(
           threshold: config.relevance_threshold,
           topN: config.top_n,
           threadId,
+          onCharge: opts.onCharge,
         });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
@@ -472,13 +511,19 @@ export async function rankTopics(
           { event: "llm_rank_topic_failed", topic: topic.name, error },
           "Topic ranking failed; continuing with other topics",
         );
-        return { items: [], cost: 0, errors: [{ topic: topic.name, error }] };
+        return {
+          items: [],
+          cost: 0,
+          charges: [],
+          errors: [{ topic: topic.name, error }],
+        };
       }
     },
   );
 
   const ranked = results.flatMap((r) => r.items);
-  const cost = results.reduce((sum, r) => sum + r.cost, 0);
+  const charges = results.flatMap((r) => r.charges);
+  const cost = charges.reduce((sum, charge) => sum + charge.cost, 0);
   const errors = results.flatMap((r) => r.errors);
 
   logger.info(
@@ -495,11 +540,16 @@ export async function rankTopics(
       failedTopics: errors.map((e) => e.topic),
       threshold: config.relevance_threshold,
       cost,
+      charges: charges.map((charge) => ({
+        topic: charge.topic,
+        cost: charge.cost,
+        generationId: charge.generationId,
+      })),
     },
     "Selected top ranked items per topic",
   );
 
-  return { items: ranked, cost, errors };
+  return { items: ranked, cost, charges, errors };
 }
 
 export async function rankItems(
@@ -509,6 +559,7 @@ export async function rankItems(
     apiKey: string;
     model: string;
     threadIds: Map<string, number>;
+    onCharge?: (charge: OpenRouterCharge) => void | Promise<void>;
   },
 ): Promise<RankResult> {
   if (candidates.length === 0) {

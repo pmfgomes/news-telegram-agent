@@ -4,6 +4,7 @@ export {
   rankTopics,
 } from "./rank.ts";
 export type {
+  OpenRouterCharge,
   RankResult,
   RankTopicError,
   TopicCandidatesProvider,
