@@ -9,18 +9,27 @@ import {
 } from "../lib/schemas.ts";
 import type { AppConfig, NewsItem, RankedItem, TopicConfig } from "../lib/types.ts";
 
+export type RankTopicError = {
+  topic: string;
+  error: string;
+};
+
 export type RankResult = {
   items: RankedItem[];
   /** Exact cost from OpenRouter usage.cost (credits charged). */
   cost: number;
+  errors: RankTopicError[];
 };
+
+const RANK_MAX_TOKENS = 8192;
+const CONTENT_PREVIEW_LIMIT = 400;
 
 export type TopicCandidatesProvider = (
   topic: TopicConfig,
 ) => Promise<NewsItem[]>;
 
 function emptyRankResult(): RankResult {
-  return { items: [], cost: 0 };
+  return { items: [], cost: 0, errors: [] };
 }
 
 export async function mapTopicsAsCandidatesReady<T>(
@@ -128,10 +137,60 @@ function buildPrompt(
     : buildFilterPrompt(topic, candidates, topN);
 }
 
-function parseRankings(content: string): LlmRankRow[] {
+function previewContent(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= CONTENT_PREVIEW_LIMIT) return trimmed;
+  return `${trimmed.slice(0, CONTENT_PREVIEW_LIMIT)}…`;
+}
+
+/** Join OpenAI/OpenRouter message content, including array-of-parts payloads. */
+export function completionText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (
+          part !== null &&
+          typeof part === "object" &&
+          "text" in part &&
+          typeof part.text === "string"
+        ) {
+          return part.text;
+        }
+        return "";
+      })
+      .join("");
+  }
+  return "";
+}
+
+/** Pull the outermost JSON object out of fences, prose, or a BOM. */
+export function extractJsonObject(content: string): string {
+  let text = content.replace(/^\uFEFF/, "").trim();
+  if (!text) {
+    throw new Error("Failed to parse LLM JSON: empty response");
+  }
+
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence?.[1]) {
+    text = fence[1].trim();
+  }
+
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) {
+    throw new Error("Failed to parse LLM JSON: no JSON object found");
+  }
+  return text.slice(start, end + 1);
+}
+
+export function parseRankings(content: unknown): LlmRankRow[] {
+  const text = completionText(content);
+  const payload = extractJsonObject(text);
   let json: unknown;
   try {
-    json = JSON.parse(content);
+    json = JSON.parse(payload);
   } catch (err) {
     throw new Error(`Failed to parse LLM JSON: ${String(err)}`);
   }
@@ -202,6 +261,7 @@ async function rankForTopic(
   const completion = await client.chat.completions.create({
     model: opts.model,
     temperature: 0.2,
+    max_tokens: RANK_MAX_TOKENS,
     response_format: { type: "json_object" },
     messages: [
       {
@@ -212,10 +272,13 @@ async function rankForTopic(
       { role: "user", content: buildPrompt(topic, candidates, opts.topN) },
     ],
     usage: { include: true },
+    plugins: [{ id: "response-healing" }],
   } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
 
   const latencyMs = Date.now() - started;
-  const content = completion.choices[0]?.message?.content ?? "{}";
+  const choice = completion.choices[0];
+  const content = completionText(choice?.message?.content);
+  const finishReason = choice?.finish_reason ?? null;
   const usage = openRouterUsageSchema.catch({}).parse(completion.usage ?? {});
   const promptTokens = usage.prompt_tokens ?? 0;
   const completionTokens = usage.completion_tokens ?? 0;
@@ -229,6 +292,8 @@ async function rankForTopic(
       model: opts.model,
       topic: topic.name,
       generation_id: completion.id,
+      finish_reason: finishReason,
+      content_length: content.length,
       latency_ms: latencyMs,
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
@@ -252,7 +317,29 @@ async function rankForTopic(
     "OpenRouter billed cost",
   );
 
-  const rankings = parseRankings(content)
+  let parsed: LlmRankRow[];
+  try {
+    parsed = parseRankings(content);
+  } catch (err) {
+    const truncated = finishReason === "length" ? " (response truncated)" : "";
+    const error = `${String(err)}${truncated}`;
+    logger.error(
+      {
+        event: "llm_json_parse_failed",
+        model: opts.model,
+        topic: topic.name,
+        generation_id: completion.id,
+        finish_reason: finishReason,
+        content_length: content.length,
+        content_preview: previewContent(content),
+        error,
+      },
+      "Failed to parse LLM ranking JSON",
+    );
+    return { items: [], cost, errors: [{ topic: topic.name, error }] };
+  }
+
+  const rankings = parsed
     .filter((row) => Number.isFinite(row.score) && row.score >= threshold)
     .sort((a, b) => {
       if (topic.ranking_mode === "latest") {
@@ -312,7 +399,7 @@ async function rankForTopic(
     "Selected top story clusters for topic",
   );
 
-  return { items: selected, cost };
+  return { items: selected, cost, errors: [] };
 }
 
 export async function rankTopics(
@@ -372,17 +459,27 @@ export async function rankTopics(
         return emptyRankResult();
       }
 
-      return rankForTopic(client, topic, topicCandidates, {
-        model: opts.model,
-        threshold: config.relevance_threshold,
-        topN: config.top_n,
-        threadId,
-      });
+      try {
+        return await rankForTopic(client, topic, topicCandidates, {
+          model: opts.model,
+          threshold: config.relevance_threshold,
+          topN: config.top_n,
+          threadId,
+        });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        logger.error(
+          { event: "llm_rank_topic_failed", topic: topic.name, error },
+          "Topic ranking failed; continuing with other topics",
+        );
+        return { items: [], cost: 0, errors: [{ topic: topic.name, error }] };
+      }
     },
   );
 
   const ranked = results.flatMap((r) => r.items);
   const cost = results.reduce((sum, r) => sum + r.cost, 0);
+  const errors = results.flatMap((r) => r.errors);
 
   logger.info(
     {
@@ -395,13 +492,14 @@ export async function rankTopics(
           ranked.filter((i) => i.topic === t.name).length,
         ]),
       ),
+      failedTopics: errors.map((e) => e.topic),
       threshold: config.relevance_threshold,
       cost,
     },
     "Selected top ranked items per topic",
   );
 
-  return { items: ranked, cost };
+  return { items: ranked, cost, errors };
 }
 
 export async function rankItems(
@@ -414,7 +512,7 @@ export async function rankItems(
   },
 ): Promise<RankResult> {
   if (candidates.length === 0) {
-    return { items: [], cost: 0 };
+    return emptyRankResult();
   }
   return rankTopics(config, async () => candidates, opts);
 }

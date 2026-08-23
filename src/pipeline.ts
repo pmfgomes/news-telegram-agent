@@ -17,7 +17,12 @@ import {
 } from "./telegram/index.ts";
 
 export type PipelineResult =
-  | { ok: true; posted: number; reason?: "no_fresh_candidates" | "none_passed_threshold" }
+  | {
+      ok: true;
+      posted: number;
+      reason?: "no_fresh_candidates" | "none_passed_threshold";
+      rankingFailedTopics: string[];
+    }
   | { ok: false; error: string };
 
 function writeRunLog(entry: Record<string, unknown>): void {
@@ -47,7 +52,7 @@ export async function runNewsPipeline(opts: {
 
     const sourceFetches = startSourceFetches(config);
     let hadFreshCandidates = false;
-    const { items: ranked, cost } = await rankTopics(
+    const { items: ranked, cost, errors } = await rankTopics(
       config,
       async (topic) => {
         const fetched = await fetchItemsForTopic(
@@ -75,6 +80,7 @@ export async function runNewsPipeline(opts: {
       },
     );
     totalCost = cost;
+    const rankingFailedTopics = errors.map((error) => error.topic);
 
     if (!hadFreshCandidates) {
       const summary = {
@@ -86,10 +92,20 @@ export async function runNewsPipeline(opts: {
       };
       logger.info(summary, "Nothing new to post");
       writeRunLog({ ...summary, at: new Date().toISOString() });
-      return { ok: true, posted: 0, reason: "no_fresh_candidates" };
+      return {
+        ok: true,
+        posted: 0,
+        reason: "no_fresh_candidates",
+        rankingFailedTopics,
+      };
     }
 
     if (ranked.length === 0) {
+      if (errors.length > 0) {
+        throw new Error(
+          errors.map((error) => `${error.topic}: ${error.error}`).join("; "),
+        );
+      }
       const summary = {
         event: "run_complete",
         posted: 0,
@@ -99,7 +115,12 @@ export async function runNewsPipeline(opts: {
       };
       logger.info(summary, "No items passed relevance threshold");
       writeRunLog({ ...summary, at: new Date().toISOString() });
-      return { ok: true, posted: 0, reason: "none_passed_threshold" };
+      return {
+        ok: true,
+        posted: 0,
+        reason: "none_passed_threshold",
+        rankingFailedTopics,
+      };
     }
 
     const posted = await postNewsletter(bot, secrets.telegramGroupId, {
@@ -122,6 +143,7 @@ export async function runNewsPipeline(opts: {
       duration_ms: Date.now() - started,
       llm_cost: totalCost,
       output: "newsletter_html",
+      ranking_failed_topics: rankingFailedTopics,
       per_topic: Object.fromEntries(
         config.topics.map((t) => [
           t.name,
@@ -146,7 +168,7 @@ export async function runNewsPipeline(opts: {
       })),
     });
 
-    return { ok: true, posted };
+    return { ok: true, posted, rankingFailedTopics };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const summary = {

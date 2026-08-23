@@ -5,7 +5,7 @@ import type {
   NewsItem,
   TopicConfig,
 } from "../lib/types.ts";
-import { mapTopicsAsCandidatesReady } from "./rank.ts";
+import { mapTopicsAsCandidatesReady, parseRankings } from "./rank.ts";
 
 const portugal: TopicConfig = {
   name: "Portugal",
@@ -89,5 +89,48 @@ describe("topic fetch and ranking concurrency", () => {
       { topic: "World", count: 1 },
     ]);
     expect(worldStarted).toBeTrue();
+  });
+});
+
+describe("parseRankings", () => {
+  const row = {
+    id: "Wired::abc",
+    related_ids: ["The Verge::def"],
+    topic: "Technology",
+    score: 0.91,
+    summary: "A Zoom bug let callers take over other devices.",
+  };
+  const json = JSON.stringify({ rankings: [row] });
+
+  test("parses a bare JSON object", () => {
+    expect(parseRankings(json)).toEqual([row]);
+  });
+
+  test("parses markdown-fenced JSON", () => {
+    expect(parseRankings(`\`\`\`json\n${json}\n\`\`\``)).toEqual([row]);
+  });
+
+  test("parses JSON wrapped in prose", () => {
+    expect(parseRankings(`Here is the ranking:\n${json}\nThanks.`)).toEqual([
+      row,
+    ]);
+  });
+
+  test("parses array-of-parts content", () => {
+    expect(parseRankings([{ type: "text", text: json }])).toEqual([row]);
+  });
+
+  test("strips a BOM", () => {
+    expect(parseRankings(`\uFEFF${json}`)).toEqual([row]);
+  });
+
+  test("rejects empty content", () => {
+    expect(() => parseRankings("")).toThrow("empty response");
+  });
+
+  test("rejects truncated JSON", () => {
+    expect(() => parseRankings('{"rankings":[{"id":"a"')).toThrow(
+      "Failed to parse LLM JSON",
+    );
   });
 });
