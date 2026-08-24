@@ -34,7 +34,13 @@ export type RankResult = {
   errors: RankTopicError[];
 };
 
-const RANK_MAX_TOKENS = 8192;
+/** Shared OpenRouter completion budget for ranking JSON. */
+export const RANK_MAX_TOKENS = 8192;
+/**
+ * Cap for reasoning/thinking tokens. Must stay strictly below RANK_MAX_TOKENS
+ * so the model still has room for the JSON answer.
+ */
+export const RANK_REASONING_MAX_TOKENS = 2048;
 const CONTENT_PREVIEW_LIMIT = 400;
 
 export type RankParseStage =
@@ -64,6 +70,44 @@ export class RankParseError extends Error {
 export type TopicCandidatesProvider = (
   topic: TopicConfig,
 ) => Promise<NewsItem[]>;
+
+/** OpenRouter ranking request fields the OpenAI SDK types do not cover. */
+export type OpenRouterRankCompletionParams = {
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  response_format: { type: "json_object" };
+  messages: OpenAI.Chat.ChatCompletionMessageParam[];
+  usage: { include: true };
+  plugins: [{ id: "response-healing" }];
+  reasoning: { max_tokens: number; exclude: true };
+};
+
+export function buildRankCompletionParams(opts: {
+  model: string;
+  prompt: string;
+}): OpenRouterRankCompletionParams {
+  return {
+    model: opts.model,
+    temperature: 0.2,
+    max_tokens: RANK_MAX_TOKENS,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a precise news clustering and ranking assistant. Reply with JSON only.",
+      },
+      { role: "user", content: opts.prompt },
+    ],
+    usage: { include: true },
+    plugins: [{ id: "response-healing" }],
+    reasoning: {
+      max_tokens: RANK_REASONING_MAX_TOKENS,
+      exclude: true,
+    },
+  };
+}
 
 function emptyRankResult(): RankResult {
   return { items: [], cost: 0, charges: [], errors: [] };
@@ -375,22 +419,12 @@ async function rankForTopic(
     "Requesting LLM ranking for topic",
   );
 
-  const completion = await client.chat.completions.create({
-    model: opts.model,
-    temperature: 0.2,
-    max_tokens: RANK_MAX_TOKENS,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a precise news clustering and ranking assistant. Reply with JSON only.",
-      },
-      { role: "user", content: buildPrompt(topic, candidates, opts.topN) },
-    ],
-    usage: { include: true },
-    plugins: [{ id: "response-healing" }],
-  } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
+  const completion = await client.chat.completions.create(
+    buildRankCompletionParams({
+      model: opts.model,
+      prompt: buildPrompt(topic, candidates, opts.topN),
+    }) as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+  );
 
   const latencyMs = Date.now() - started;
   const choice = completion.choices[0];
