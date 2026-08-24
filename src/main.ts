@@ -3,11 +3,8 @@ import { dataDir, loadConfig, loadSecrets } from "./config/index.ts";
 import { logger } from "./lib/logger.ts";
 import { runNewsPipeline } from "./pipeline.ts";
 import { Store } from "./store/index.ts";
-import { createBot } from "./telegram/index.ts";
-import {
-  formatOpenRouterChargeLine,
-  formatPipelineReply,
-} from "./telegram/replies.ts";
+import { createBot, telegramErrorFields } from "./telegram/index.ts";
+import { formatPipelineReply } from "./telegram/replies.ts";
 
 function isConfiguredGroup(chat: Context["chat"], groupId: string): boolean {
   if (!chat) return false;
@@ -29,7 +26,7 @@ async function isGroupAdmin(ctx: Context): Promise<boolean> {
     return author.status === "creator" || author.status === "administrator";
   } catch (err) {
     logger.warn(
-      { event: "admin_check_failed", error: String(err) },
+      { event: "admin_check_failed", ...telegramErrorFields(err) },
       "Failed to check group admin status",
     );
     return false;
@@ -61,36 +58,31 @@ async function main(): Promise<void> {
     newsRunning = true;
     try {
       await ctx.reply("Getting the news…");
-      let chargeReports = Promise.resolve();
       const result = await runNewsPipeline({
         bot,
         store,
         config,
         secrets,
         messageThreadId: ctx.message?.message_thread_id,
-        onOpenRouterCharge: (charge) => {
-          chargeReports = chargeReports.then(async () => {
-            try {
-              await ctx.reply(formatOpenRouterChargeLine(charge));
-            } catch (err) {
-              logger.warn(
-                {
-                  event: "openrouter_charge_reply_failed",
-                  topic: charge.topic,
-                  error: String(err),
-                },
-                "Failed to send OpenRouter charge to Telegram",
-              );
-            }
-          });
-          return chargeReports;
-        },
       });
-      await chargeReports;
       await ctx.reply(formatPipelineReply(result));
     } finally {
       newsRunning = false;
     }
+  });
+
+  // Without this, an error thrown while handling an update (e.g. a failed
+  // reply) crashes long polling with a bare console stack instead of a log.
+  bot.catch((err) => {
+    logger.error(
+      {
+        event: "bot_update_failed",
+        update_id: err.ctx.update.update_id,
+        chat_id: err.ctx.chat?.id,
+        ...telegramErrorFields(err.error),
+      },
+      "Unhandled error while handling Telegram update",
+    );
   });
 
   await bot.api.setMyCommands([
@@ -120,4 +112,38 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+// Last-resort handlers: log through pino before the container dies, so a
+// crash leaves evidence in `docker compose logs` instead of exiting silently.
+process.on("uncaughtException", (err) => {
+  logger.fatal(
+    { event: "uncaught_exception", error: err.message, stack: err.stack },
+    "Uncaught exception; exiting",
+  );
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.fatal(
+    {
+      event: "unhandled_rejection",
+      error: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+    },
+    "Unhandled promise rejection; exiting",
+  );
+  process.exit(1);
+});
+
+try {
+  await main();
+} catch (err) {
+  logger.fatal(
+    {
+      event: "startup_failed",
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    },
+    "Bot crashed during startup or polling",
+  );
+  process.exit(1);
+}

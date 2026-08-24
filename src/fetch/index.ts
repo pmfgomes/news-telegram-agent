@@ -287,6 +287,7 @@ export function startSourceFetches(config: AppConfig): SourceFetches {
     config.sources.map((source, index) => {
       const promise = (async (): Promise<NewsItem[]> => {
         if (index > 0) await sleep(SOURCE_DELAY_MS * index);
+        const startedAt = Date.now();
         try {
           return await fetchSource(source, config.latest_per_source);
         } catch (err) {
@@ -294,6 +295,9 @@ export function startSourceFetches(config: AppConfig): SourceFetches {
             {
               event: "fetch_fail",
               source: source.name,
+              url: source.rss_url ?? source.url,
+              topics: source.topics,
+              duration_ms: Date.now() - startedAt,
               error: String(err),
             },
             "Source failed; continuing",

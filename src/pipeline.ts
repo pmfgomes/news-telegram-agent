@@ -25,7 +25,12 @@ export type PipelineResult =
       rankingFailedTopics: string[];
       charges: OpenRouterCharge[];
     }
-  | { ok: false; error: string; charges: OpenRouterCharge[] };
+  | {
+      ok: false;
+      error: string;
+      rankingFailedTopics: string[];
+      charges: OpenRouterCharge[];
+    };
 
 function writeRunLog(entry: Record<string, unknown>): void {
   const dir = join(dataDir(), "logs");
@@ -39,13 +44,13 @@ export async function runNewsPipeline(opts: {
   config: AppConfig;
   secrets: EnvSecrets;
   messageThreadId?: number;
-  onOpenRouterCharge?: (charge: OpenRouterCharge) => void | Promise<void>;
 }): Promise<PipelineResult> {
   const { bot, store, config, secrets } = opts;
   const started = Date.now();
   mkdirSync(join(dataDir(), "logs"), { recursive: true });
   let totalCost = 0;
   const charges: OpenRouterCharge[] = [];
+  let rankingFailedTopics: string[] = [];
 
   try {
     const threadIds = resolveTopicThreads(
@@ -81,27 +86,15 @@ export async function runNewsPipeline(opts: {
         apiKey: secrets.openRouterApiKey,
         model: secrets.openRouterModel,
         threadIds,
-        onCharge: async (charge) => {
+        onCharge: (charge) => {
           charges.push(charge);
-          try {
-            await opts.onOpenRouterCharge?.(charge);
-          } catch (err) {
-            logger.warn(
-              {
-                event: "openrouter_charge_report_failed",
-                topic: charge.topic,
-                error: String(err),
-              },
-              "Failed to report OpenRouter charge to Telegram",
-            );
-          }
         },
       },
     );
     totalCost = cost;
     const billedCharges =
       rankedCharges.length > 0 ? rankedCharges : [...charges];
-    const rankingFailedTopics = errors.map((error) => error.topic);
+    rankingFailedTopics = errors.map((error) => error.topic);
 
     if (!hadFreshCandidates) {
       const summary = {
@@ -201,6 +194,7 @@ export async function runNewsPipeline(opts: {
     const summary = {
       event: "run_failed",
       error: message,
+      stack: err instanceof Error ? err.stack : undefined,
       duration_ms: Date.now() - started,
       llm_cost: totalCost,
       llm_charges: charges,
@@ -212,6 +206,6 @@ export async function runNewsPipeline(opts: {
       await sendFailureAlert(bot, secrets.telegramAlertChatId, message);
     }
 
-    return { ok: false, error: message, charges };
+    return { ok: false, error: message, rankingFailedTopics, charges };
   }
 }
