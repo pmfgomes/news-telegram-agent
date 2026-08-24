@@ -1,5 +1,8 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import OpenAI from "openai";
 import { ZodError } from "zod";
+import { dataDir } from "../config/index.ts";
 import { logger } from "../lib/logger.ts";
 import {
   formatZodError,
@@ -39,6 +42,30 @@ export const RANK_MAX_TOKENS = 8192;
  */
 export const RANK_REASONING_MAX_TOKENS = 2048;
 const CONTENT_PREVIEW_LIMIT = 400;
+
+export type RankParseStage =
+  | "empty_content"
+  | "no_json_object"
+  | "invalid_json"
+  | "schema_mismatch";
+
+/** Ranking parse failure that records which stage rejected the response. */
+export class RankParseError extends Error {
+  readonly stage: RankParseStage;
+  /** Exact string handed to JSON.parse, when extraction got that far. */
+  readonly payload: string | null;
+
+  constructor(
+    message: string,
+    stage: RankParseStage,
+    payload: string | null = null,
+  ) {
+    super(message);
+    this.name = "RankParseError";
+    this.stage = stage;
+    this.payload = payload;
+  }
+}
 
 export type TopicCandidatesProvider = (
   topic: TopicConfig,
@@ -197,6 +224,71 @@ function previewContent(text: string): string {
   return `${trimmed.slice(0, CONTENT_PREVIEW_LIMIT)}…`;
 }
 
+/** Tail preview: truncation and unbalanced-brace failures show up at the end. */
+function previewTail(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (trimmed.length <= CONTENT_PREVIEW_LIMIT) return undefined;
+  return `…${trimmed.slice(-CONTENT_PREVIEW_LIMIT)}`;
+}
+
+/**
+ * Persist the complete failing completion (all choices, usage, provider
+ * metadata) so a parse failure can be diagnosed from the exact payload
+ * instead of a log preview. Returns the file path, or null if the dump
+ * itself failed (never breaks the run).
+ */
+function dumpFailedCompletion(opts: {
+  topic: string;
+  model: string;
+  stage: RankParseStage | null;
+  error: string;
+  content: string;
+  completion: OpenAI.Chat.ChatCompletion;
+}): string | null {
+  const dir = join(dataDir(), "logs", "llm-failures");
+  const slug =
+    opts.topic
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "topic";
+  const path = join(
+    dir,
+    `${new Date().toISOString().replace(/[:.]/g, "-")}-${slug}.json`,
+  );
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path,
+      `${JSON.stringify(
+        {
+          at: new Date().toISOString(),
+          topic: opts.topic,
+          requested_model: opts.model,
+          stage: opts.stage,
+          error: opts.error,
+          content: opts.content,
+          completion: opts.completion,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    return path;
+  } catch (err) {
+    logger.warn(
+      {
+        event: "llm_failure_dump_failed",
+        topic: opts.topic,
+        path,
+        error: String(err),
+      },
+      "Could not write LLM failure dump",
+    );
+    return null;
+  }
+}
+
 /** Join OpenAI/OpenRouter message content, including array-of-parts payloads. */
 export function completionText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -223,7 +315,10 @@ export function completionText(content: unknown): string {
 export function extractJsonObject(content: string): string {
   let text = content.replace(/^\uFEFF/, "").trim();
   if (!text) {
-    throw new Error("Failed to parse LLM JSON: empty response");
+    throw new RankParseError(
+      "Failed to parse LLM JSON: empty response",
+      "empty_content",
+    );
   }
 
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -234,7 +329,10 @@ export function extractJsonObject(content: string): string {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end <= start) {
-    throw new Error("Failed to parse LLM JSON: no JSON object found");
+    throw new RankParseError(
+      "Failed to parse LLM JSON: no JSON object found",
+      "no_json_object",
+    );
   }
   return text.slice(start, end + 1);
 }
@@ -246,14 +344,22 @@ export function parseRankings(content: unknown): LlmRankRow[] {
   try {
     json = JSON.parse(payload);
   } catch (err) {
-    throw new Error(`Failed to parse LLM JSON: ${String(err)}`);
+    throw new RankParseError(
+      `Failed to parse LLM JSON: ${String(err)}`,
+      "invalid_json",
+      payload,
+    );
   }
 
   try {
     return llmRankResponseSchema.parse(json).rankings;
   } catch (err) {
     if (err instanceof ZodError) {
-      throw new Error(`Invalid LLM ranking JSON:\n${formatZodError(err)}`);
+      throw new RankParseError(
+        `Invalid LLM ranking JSON:\n${formatZodError(err)}`,
+        "schema_mismatch",
+        payload,
+      );
     }
     throw err;
   }
@@ -324,6 +430,17 @@ async function rankForTopic(
   const choice = completion.choices[0];
   const content = completionText(choice?.message?.content);
   const finishReason = choice?.finish_reason ?? null;
+  // OpenRouter extensions that the OpenAI SDK does not type.
+  const provider =
+    "provider" in completion && typeof completion.provider === "string"
+      ? completion.provider
+      : null;
+  const nativeFinishReason =
+    choice !== undefined &&
+    "native_finish_reason" in choice &&
+    typeof choice.native_finish_reason === "string"
+      ? choice.native_finish_reason
+      : null;
   const usage = openRouterUsageSchema.catch({}).parse(completion.usage ?? {});
   const promptTokens = usage.prompt_tokens ?? 0;
   const completionTokens = usage.completion_tokens ?? 0;
@@ -335,6 +452,8 @@ async function rankForTopic(
     {
       event: "llm_response",
       model: opts.model,
+      served_model: completion.model,
+      provider,
       topic: topic.name,
       generation_id: completion.id,
       finish_reason: finishReason,
@@ -388,16 +507,39 @@ async function rankForTopic(
     parsed = parseRankings(content);
   } catch (err) {
     const truncated = finishReason === "length" ? " (response truncated)" : "";
-    const error = `${String(err)}${truncated}`;
+    const message = err instanceof Error ? err.message : String(err);
+    const error = `${message}${truncated}`;
+    const stage = err instanceof RankParseError ? err.stage : null;
+    const payload = err instanceof RankParseError ? err.payload : null;
+    const dumpPath = dumpFailedCompletion({
+      topic: topic.name,
+      model: opts.model,
+      stage,
+      error,
+      content,
+      completion,
+    });
     logger.error(
       {
         event: "llm_json_parse_failed",
         model: opts.model,
+        served_model: completion.model,
+        provider,
         topic: topic.name,
         generation_id: completion.id,
+        stage,
         finish_reason: finishReason,
+        native_finish_reason: nativeFinishReason,
+        refusal: choice?.message?.refusal ?? null,
+        choice_count: completion.choices.length,
+        completion_tokens: completionTokens,
+        max_tokens: RANK_MAX_TOKENS,
         content_length: content.length,
         content_preview: previewContent(content),
+        content_tail: previewTail(content),
+        payload_length: payload?.length,
+        payload_tail: payload === null ? undefined : previewTail(payload),
+        dump_path: dumpPath,
         error,
       },
       "Failed to parse LLM ranking JSON",
@@ -541,8 +683,26 @@ export async function rankTopics(
         });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
+        // OpenAI SDK errors carry the HTTP status and the OpenRouter error
+        // body (provider name, upstream message) that err.message drops.
+        const apiFields =
+          err instanceof OpenAI.APIError
+            ? {
+                status: err.status,
+                api_code: err.code,
+                api_error_type: err.type,
+                api_error: err.error,
+              }
+            : {};
         logger.error(
-          { event: "llm_rank_topic_failed", topic: topic.name, error },
+          {
+            event: "llm_rank_topic_failed",
+            topic: topic.name,
+            model: opts.model,
+            error,
+            ...apiFields,
+            stack: err instanceof Error ? err.stack : undefined,
+          },
           "Topic ranking failed; continuing with other topics",
         );
         return {

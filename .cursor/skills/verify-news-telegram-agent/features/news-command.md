@@ -4,7 +4,7 @@
 
 ## Sub-features
 
-- `news-admin` starts a run and replies `Getting the news…`, then one line per OpenRouter charge (`OpenRouter · <topic> · $<cost>`), then a Done/failed line that lists every charge and `Total: $<sum>`.
+- `news-admin` starts a run and replies `Getting the news…`, then one closing message: Done/failed, `Error in <topics>.` when ranking failed for any section, and `OpenRouter total: $<sum>`.
 - `news-non-admin` replies `Only group admins can run /news.`
 - `news-busy` refuses a second overlapping run.
 - `news-wrong-chat` ignores DMs and other groups.
@@ -26,7 +26,7 @@ Preconditions:
 
 - **Send `/news`.** There is no safe helper that fakes this. Send the command in Telegram.
 - **Watch the run.** Follow `docker compose logs -f` or Bun stdout until a `run_complete` or `run_failed` log. Read the new line in `data/logs/runs.jsonl`.
-- **End state.** The bot replies with each OpenRouter charge as ranking finishes, then `Done — sent newsletter with N stor(y|ies).` (plus an OpenRouter itemized total), `Done — nothing new to post.`, `Done — no items passed the relevance threshold.`, or `News run failed: …`. Each of those closing replies includes the OpenRouter charge list and `Total`.
+- **End state.** The bot replies `Getting the news…`, then one closing message: `Done - sent newsletter with N stor(y|ies).`, `Done - nothing new to post.`, `Done - no items passed the relevance threshold.`, or `News run failed.` / `News run failed: …`. Ranking failures add `Error in <topics>.` Per-topic OpenRouter charges are not sent. Every closing reply ends with `OpenRouter total: $<sum>`.
 - **Proof.** That reply plus the newsletter document in the thread plus the `runs.jsonl` line (`output: "newsletter_html"` when posted). "Getting the news…" alone is not proof.
 
 ## Gotchas
