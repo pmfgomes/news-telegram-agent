@@ -24,7 +24,7 @@ Preconditions:
 - Every topic in `config.yaml` has `telegram_thread_id` (still required for ranking topic resolution).
 
 - **Drive.** Send `/news`. There is no rank-only helper that still proves the user path.
-- **Observe.** `runs.jsonl` has `posted`, `llm_cost`, `llm_charges`, `output: "newsletter_html"`, `per_topic`, or an error. Telegram shows one charge reply per OpenRouter call, a closing total, and one newsletter document in the invoking thread. The HTML header shows `Cost $…` immediately after `Newsletter`.
+- **Observe.** `runs.jsonl` has `posted`, `llm_cost`, `llm_charges`, `output: "newsletter_html"`, `per_topic`, or an error. Telegram shows one closing reply with `OpenRouter total` (and `Error in …` if ranking failed for any topic) plus one newsletter document in the invoking thread. The HTML header shows `Cost $…` immediately after `Newsletter`.
 - **Offline HTML check.** Renderer tests plus opening a generated fixture prove layout without posting.
 - **Concurrency check.** `bun test src/llm/rank.test.ts` holds one topic's source promise open and proves another topic starts processing first.
 - **Skipped by fetch-smoke.** Fetch-smoke does not import `rankItems` or `postNewsletter`. Treat rank-and-post as unverified after fetch-smoke.
