@@ -5,7 +5,13 @@ import type {
   NewsItem,
   TopicConfig,
 } from "../lib/types.ts";
-import { mapTopicsAsCandidatesReady, parseRankings } from "./rank.ts";
+import {
+  buildRankCompletionParams,
+  mapTopicsAsCandidatesReady,
+  parseRankings,
+  RANK_MAX_TOKENS,
+  RANK_REASONING_MAX_TOKENS,
+} from "./rank.ts";
 
 const portugal: TopicConfig = {
   name: "Portugal",
@@ -92,6 +98,31 @@ describe("topic fetch and ranking concurrency", () => {
   });
 });
 
+describe("buildRankCompletionParams", () => {
+  test("reserves output tokens by capping reasoning below max_tokens", () => {
+    const params = buildRankCompletionParams({
+      model: "deepseek/deepseek-v4-flash",
+      prompt: "rank these candidates",
+    });
+
+    expect(params.max_tokens).toBe(RANK_MAX_TOKENS);
+    expect(params.reasoning.max_tokens).toBe(RANK_REASONING_MAX_TOKENS);
+    expect(params.reasoning.exclude).toBe(true);
+    expect(params.max_tokens).toBeGreaterThan(params.reasoning.max_tokens);
+    expect(params.response_format).toEqual({ type: "json_object" });
+    expect(params.plugins).toEqual([{ id: "response-healing" }]);
+    expect(params.usage).toEqual({ include: true });
+    expect(params.messages).toEqual([
+      {
+        role: "system",
+        content:
+          "You are a precise news clustering and ranking assistant. Reply with JSON only.",
+      },
+      { role: "user", content: "rank these candidates" },
+    ]);
+  });
+});
+
 describe("parseRankings", () => {
   const row = {
     id: "Wired::abc",
@@ -126,6 +157,10 @@ describe("parseRankings", () => {
 
   test("rejects empty content", () => {
     expect(() => parseRankings("")).toThrow("empty response");
+  });
+
+  test("rejects whitespace-only content from truncated reasoning", () => {
+    expect(() => parseRankings(" ")).toThrow("empty response");
   });
 
   test("rejects truncated JSON", () => {
