@@ -1,4 +1,4 @@
-import { Bot, GrammyError, InputFile } from "grammy";
+import { Bot, GrammyError, HttpError, InputFile } from "grammy";
 import { formatUsd } from "../lib/money.ts";
 import { logger } from "../lib/logger.ts";
 import type { RankedItem, TopicConfig } from "../lib/types.ts";
@@ -10,6 +10,29 @@ import type { Store } from "../store/index.ts";
 
 export function createBot(token: string): Bot {
   return new Bot(token);
+}
+
+/**
+ * Structured log fields for a failed Telegram call: surfaces the Bot API
+ * error code, method, and parameters (e.g. retry_after on 429) that
+ * String(err) hides.
+ */
+export function telegramErrorFields(err: unknown): Record<string, unknown> {
+  if (err instanceof GrammyError) {
+    return {
+      error: err.description,
+      error_code: err.error_code,
+      method: err.method,
+      parameters: err.parameters,
+    };
+  }
+  if (err instanceof HttpError) {
+    return { error: String(err), kind: "network" };
+  }
+  return {
+    error: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined,
+  };
 }
 
 export function missingTopicError(topicName: string): Error {
@@ -95,6 +118,7 @@ export async function postNewsletter(
   const caption = `News newsletter — ${opts.items.length} stor${
     opts.items.length === 1 ? "y" : "ies"
   } across ${opts.topics.length} topic${opts.topics.length === 1 ? "" : "s"}. Cost ${formatUsd(cost)}.`;
+  const bytes = Buffer.byteLength(html, "utf8");
 
   logger.info(
     {
@@ -103,7 +127,7 @@ export async function postNewsletter(
       threadId: opts.messageThreadId,
       itemCount: opts.items.length,
       filename,
-      bytes: Buffer.byteLength(html, "utf8"),
+      bytes,
     },
     "Sending newsletter HTML document to Telegram",
   );
@@ -126,7 +150,9 @@ export async function postNewsletter(
         chat: groupId,
         threadId: opts.messageThreadId,
         ids: opts.items.map((item) => item.id),
-        error: String(err),
+        filename,
+        bytes,
+        ...telegramErrorFields(err),
       },
       "Failed to post newsletter to Telegram",
     );
@@ -166,7 +192,7 @@ export async function sendFailureAlert(
     logger.info({ event: "telegram_alert", chat: chatId }, "Sent failure alert");
   } catch (err) {
     logger.error(
-      { event: "telegram_alert_fail", chat: chatId, error: String(err) },
+      { event: "telegram_alert_fail", chat: chatId, ...telegramErrorFields(err) },
       "Failed to send failure alert",
     );
   }

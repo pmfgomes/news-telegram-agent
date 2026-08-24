@@ -201,6 +201,7 @@ export async function runNewsPipeline(opts: {
     const summary = {
       event: "run_failed",
       error: message,
+      stack: err instanceof Error ? err.stack : undefined,
       duration_ms: Date.now() - started,
       llm_cost: totalCost,
       llm_charges: charges,

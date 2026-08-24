@@ -5,7 +5,11 @@ import type {
   NewsItem,
   TopicConfig,
 } from "../lib/types.ts";
-import { mapTopicsAsCandidatesReady, parseRankings } from "./rank.ts";
+import {
+  mapTopicsAsCandidatesReady,
+  parseRankings,
+  RankParseError,
+} from "./rank.ts";
 
 const portugal: TopicConfig = {
   name: "Portugal",
@@ -132,5 +136,20 @@ describe("parseRankings", () => {
     expect(() => parseRankings('{"rankings":[{"id":"a"')).toThrow(
       "Failed to parse LLM JSON",
     );
+  });
+
+  test("labels each failure with the stage that rejected it", () => {
+    const stageOf = (input: string): string | null => {
+      try {
+        parseRankings(input);
+        return null;
+      } catch (err) {
+        return err instanceof RankParseError ? err.stage : null;
+      }
+    };
+    expect(stageOf("")).toBe("empty_content");
+    expect(stageOf('{"rankings":[{"id":"a"')).toBe("no_json_object");
+    expect(stageOf('{"rankings":[}')).toBe("invalid_json");
+    expect(stageOf('{"rankings":[{"id":""}]}')).toBe("schema_mismatch");
   });
 });

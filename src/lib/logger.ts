@@ -5,6 +5,9 @@ const stream = pretty({
   colorize: true,
   translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l",
   ignore: "pid,hostname",
+  // Flush writes synchronously so fatal logs are not lost when the process
+  // exits right after logging (crash handlers call process.exit).
+  sync: true,
 });
 
 export const logger = pino(
