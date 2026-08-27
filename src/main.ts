@@ -99,11 +99,8 @@ async function main(): Promise<void> {
 
   try {
     await bot.start({
-      onStart: (info) => {
-        logger.info(
-          { event: "bot_started", username: info.username },
-          "Bot is running; waiting for /news",
-        );
+      onStart: () => {
+        logger.info("Bot is running; waiting for /news");
       },
     });
   } finally {

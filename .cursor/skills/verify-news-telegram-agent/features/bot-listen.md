@@ -4,7 +4,7 @@ The agent starts long polling and waits for `/news`. Users never hit a URL. They
 
 ## Sub-features
 
-- `listen-start` logs `bot_started` and waits.
+- `listen-start` logs `Bot is running; waiting for /news` and waits.
 - `listen-singleton` refuses a second poller on the same token.
 
 ## How to get to it (user POV)
@@ -21,7 +21,7 @@ Preconditions:
 - No extra poller will be started if one is already running.
 
 - **Identity.** Run `bun .cursor/skills/verify-news-telegram-agent/scripts/doctor.ts`. Exit 0. `doctor.json` contains `username` and `id`.
-- **Process.** If this run started compose, `docker compose logs --tail=50` includes `bot_started`. If the user already had it up, doctor plus `docker compose ps` is enough. Do not start another stack to prove listen.
+- **Process.** If this run started compose, `docker compose logs --tail=50` includes `Bot is running; waiting for /news`. If the user already had it up, doctor plus `docker compose ps` is enough. Do not start another stack to prove listen.
 - **Proof.** Keep `doctor.json`. If logs were captured, store a redacted snippet next to it, token-free.
 
 ## Gotchas

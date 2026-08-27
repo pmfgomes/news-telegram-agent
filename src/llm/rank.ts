@@ -34,8 +34,8 @@ export type RankResult = {
   errors: RankTopicError[];
 };
 
-/** Shared OpenRouter completion budget for ranking JSON. */
-export const RANK_MAX_TOKENS = 8192;
+/** Shared OpenRouter completion budget for ranking JSON (fits ~50 clusters). */
+export const RANK_MAX_TOKENS = 16384;
 /**
  * Cap for reasoning/thinking tokens. Must stay strictly below RANK_MAX_TOKENS
  * so the model still has room for the JSON answer.

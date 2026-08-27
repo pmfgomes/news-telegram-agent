@@ -20,7 +20,7 @@ docker compose build
 docker compose up -d
 ```
 
-Ready when `docker compose logs` contains `event":"bot_started"` or the line `Bot is running; waiting for /news`.
+Ready when `docker compose logs` contains the line `Bot is running; waiting for /news`.
 
 Local Bun alternative:
 
