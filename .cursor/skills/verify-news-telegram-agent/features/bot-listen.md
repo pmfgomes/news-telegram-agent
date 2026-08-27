@@ -4,7 +4,7 @@ The agent starts long polling and waits for `/news`. Users never hit a URL. They
 
 ## Sub-features
 
-- `listen-start` logs `Bot is running; waiting for /news` and waits.
+- `listen-start` logs `Bot is running; waiting for /news` and waits. The earlier starting log includes `model` from `OPENROUTER_MODEL`.
 - `listen-singleton` refuses a second poller on the same token.
 
 ## How to get to it (user POV)

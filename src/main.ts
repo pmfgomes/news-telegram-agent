@@ -93,7 +93,11 @@ async function main(): Promise<void> {
   process.once("SIGTERM", () => bot.stop());
 
   logger.info(
-    { event: "bot_starting", dataPath: dataDir() },
+    {
+      event: "bot_starting",
+      dataPath: dataDir(),
+      model: secrets.openRouterModel,
+    },
     "Starting news bot (long polling)",
   );
 
