@@ -59,7 +59,7 @@ export const appConfigSchema = z
     timezone: z.string().trim().min(1).default("Europe/Lisbon"),
     latest_per_source: z.coerce.number().int().positive().default(10),
     max_candidates: z.coerce.number().int().positive().default(80),
-    top_n: z.coerce.number().int().positive().default(50),
+    top_n: z.coerce.number().int().positive().default(10),
     relevance_threshold: z.coerce.number().min(0).max(1).default(0.6),
     topics: z.array(topicConfigSchema).min(1),
     sources: z.array(sourceConfigSchema).min(1),
