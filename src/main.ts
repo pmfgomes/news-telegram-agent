@@ -103,15 +103,8 @@ async function main(): Promise<void> {
 
   try {
     await bot.start({
-      onStart: (info) => {
-        logger.info(
-          {
-            event: "bot_started",
-            username: info.username,
-            model: secrets.openRouterModel,
-          },
-          `Bot is running with ${secrets.openRouterModel}; waiting for /news`,
-        );
+      onStart: () => {
+        logger.info("Bot is running; waiting for /news");
       },
     });
   } finally {
