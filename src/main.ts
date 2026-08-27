@@ -93,7 +93,11 @@ async function main(): Promise<void> {
   process.once("SIGTERM", () => bot.stop());
 
   logger.info(
-    { event: "bot_starting", dataPath: dataDir() },
+    {
+      event: "bot_starting",
+      dataPath: dataDir(),
+      model: secrets.openRouterModel,
+    },
     "Starting news bot (long polling)",
   );
 
@@ -101,8 +105,12 @@ async function main(): Promise<void> {
     await bot.start({
       onStart: (info) => {
         logger.info(
-          { event: "bot_started", username: info.username },
-          "Bot is running; waiting for /news",
+          {
+            event: "bot_started",
+            username: info.username,
+            model: secrets.openRouterModel,
+          },
+          `Bot is running with ${secrets.openRouterModel}; waiting for /news`,
         );
       },
     });
