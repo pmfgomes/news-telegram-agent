@@ -4,7 +4,7 @@ The agent starts long polling and waits for `/news`. Users never hit a URL. They
 
 ## Sub-features
 
-- `listen-start` logs `bot_started` and waits.
+- `listen-start` logs `bot_started` (includes `model` from `OPENROUTER_MODEL`) and waits.
 - `listen-singleton` refuses a second poller on the same token.
 
 ## How to get to it (user POV)
