@@ -16,9 +16,7 @@ export function formatRankingErrorLine(topics: readonly string[]): string | null
 }
 
 export function formatOpenRouterSummary(charges: OpenRouterCharge[]): string {
-  return `OpenRouter total: ${formatUsd(
-    sumCosts(charges.map((charge) => charge.cost)),
-  )}`;
+  return `OpenRouter total: ${formatUsd(sumCosts(charges.map((charge) => charge.cost)))}`;
 }
 
 export function formatPipelineReply(result: PipelineResult): string {

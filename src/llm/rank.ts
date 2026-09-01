@@ -55,11 +55,7 @@ export class RankParseError extends Error {
   /** Exact string handed to JSON.parse, when extraction got that far. */
   readonly payload: string | null;
 
-  constructor(
-    message: string,
-    stage: RankParseStage,
-    payload: string | null = null,
-  ) {
+  constructor(message: string, stage: RankParseStage, payload: string | null = null) {
     super(message);
     this.name = "RankParseError";
     this.stage = stage;
@@ -67,9 +63,7 @@ export class RankParseError extends Error {
   }
 }
 
-export type TopicCandidatesProvider = (
-  topic: TopicConfig,
-) => Promise<NewsItem[]>;
+export type TopicCandidatesProvider = (topic: TopicConfig) => Promise<NewsItem[]>;
 
 /** OpenRouter ranking request fields the OpenAI SDK types do not cover. */
 export type OpenRouterRankCompletionParams = {
@@ -95,8 +89,7 @@ export function buildRankCompletionParams(opts: {
     messages: [
       {
         role: "system",
-        content:
-          "You are a precise news clustering and ranking assistant. Reply with JSON only.",
+        content: "You are a precise news clustering and ranking assistant. Reply with JSON only.",
       },
       { role: "user", content: opts.prompt },
     ],
@@ -116,16 +109,9 @@ function emptyRankResult(): RankResult {
 export async function mapTopicsAsCandidatesReady<T>(
   topics: TopicConfig[],
   getCandidates: TopicCandidatesProvider,
-  processTopic: (
-    topic: TopicConfig,
-    candidates: NewsItem[],
-  ) => Promise<T>,
+  processTopic: (topic: TopicConfig, candidates: NewsItem[]) => Promise<T>,
 ): Promise<T[]> {
-  return Promise.all(
-    topics.map(async (topic) =>
-      processTopic(topic, await getCandidates(topic)),
-    ),
-  );
+  return Promise.all(topics.map(async (topic) => processTopic(topic, await getCandidates(topic))));
 }
 
 function topicLabel(topic: TopicConfig): string {
@@ -136,19 +122,13 @@ function formatCandidates(candidates: NewsItem[]): string {
   return candidates
     .map((c, i) => {
       const summary = c.summary ? ` | summary: ${c.summary.slice(0, 180)}` : "";
-      const published = c.publishedAt
-        ? ` | published=${c.publishedAt.toISOString()}`
-        : "";
+      const published = c.publishedAt ? ` | published=${c.publishedAt.toISOString()}` : "";
       return `${i + 1}. id=${JSON.stringify(c.id)} | source=${c.source} | title=${JSON.stringify(c.title)}${summary}${published} | link=${c.link}`;
     })
     .join("\n");
 }
 
-function buildFilterPrompt(
-  topic: TopicConfig,
-  candidates: NewsItem[],
-  topN: number,
-): string {
+function buildFilterPrompt(topic: TopicConfig, candidates: NewsItem[], topN: number): string {
   return `You organize and rank news into Google News-style story clusters for one Telegram topic.
 
 Topic:
@@ -177,11 +157,7 @@ Candidates:
 ${formatCandidates(candidates)}`;
 }
 
-function buildLatestPrompt(
-  topic: TopicConfig,
-  candidates: NewsItem[],
-  topN: number,
-): string {
+function buildLatestPrompt(topic: TopicConfig, candidates: NewsItem[], topN: number): string {
   return `You cluster news for one Telegram topic. Sources are already on-topic — do NOT filter by relevance or place name.
 
 Topic:
@@ -208,11 +184,7 @@ Candidates:
 ${formatCandidates(candidates)}`;
 }
 
-function buildPrompt(
-  topic: TopicConfig,
-  candidates: NewsItem[],
-  topN: number,
-): string {
+function buildPrompt(topic: TopicConfig, candidates: NewsItem[], topN: number): string {
   return topic.ranking_mode === "latest"
     ? buildLatestPrompt(topic, candidates, topN)
     : buildFilterPrompt(topic, candidates, topN);
@@ -251,10 +223,7 @@ function dumpFailedCompletion(opts: {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "topic";
-  const path = join(
-    dir,
-    `${new Date().toISOString().replace(/[:.]/g, "-")}-${slug}.json`,
-  );
+  const path = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${slug}.json`);
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -315,10 +284,7 @@ export function completionText(content: unknown): string {
 export function extractJsonObject(content: string): string {
   let text = content.replace(/^\uFEFF/, "").trim();
   if (!text) {
-    throw new RankParseError(
-      "Failed to parse LLM JSON: empty response",
-      "empty_content",
-    );
+    throw new RankParseError("Failed to parse LLM JSON: empty response", "empty_content");
   }
 
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -329,10 +295,7 @@ export function extractJsonObject(content: string): string {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end <= start) {
-    throw new RankParseError(
-      "Failed to parse LLM JSON: no JSON object found",
-      "no_json_object",
-    );
+    throw new RankParseError("Failed to parse LLM JSON: no JSON object found", "no_json_object");
   }
   return text.slice(start, end + 1);
 }
@@ -344,11 +307,7 @@ export function parseRankings(content: unknown): LlmRankRow[] {
   try {
     json = JSON.parse(payload);
   } catch (err) {
-    throw new RankParseError(
-      `Failed to parse LLM JSON: ${String(err)}`,
-      "invalid_json",
-      payload,
-    );
+    throw new RankParseError(`Failed to parse LLM JSON: ${String(err)}`, "invalid_json", payload);
   }
 
   try {
@@ -377,10 +336,7 @@ function candidatesForTopic(
         .get(candidate.source)
         ?.some((name) => name.toLowerCase() === topic.name.toLowerCase()),
     )
-    .sort(
-      (a, b) =>
-        (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0),
-    )
+    .sort((a, b) => (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0))
     .slice(0, maxCandidates);
 }
 
@@ -397,8 +353,7 @@ async function rankForTopic(
   },
 ): Promise<RankResult> {
   const started = Date.now();
-  const threshold =
-    topic.ranking_mode === "latest" ? 0 : opts.threshold;
+  const threshold = topic.ranking_mode === "latest" ? 0 : opts.threshold;
   logger.info(
     {
       event: "llm_request",
@@ -407,12 +362,10 @@ async function rankForTopic(
       ranking_mode: topic.ranking_mode,
       candidateCount: candidates.length,
       candidateSources: Object.fromEntries(
-        [...new Set(candidates.map((candidate) => candidate.source))].map(
-          (source) => [
-            source,
-            candidates.filter((candidate) => candidate.source === source).length,
-          ],
-        ),
+        [...new Set(candidates.map((candidate) => candidate.source))].map((source) => [
+          source,
+          candidates.filter((candidate) => candidate.source === source).length,
+        ]),
       ),
       interest: topic.interest,
     },
@@ -558,10 +511,7 @@ async function rankForTopic(
       if (topic.ranking_mode === "latest") {
         const aItem = candidates.find((c) => c.id === a.id);
         const bItem = candidates.find((c) => c.id === b.id);
-        return (
-          (bItem?.publishedAt?.getTime() ?? 0) -
-          (aItem?.publishedAt?.getTime() ?? 0)
-        );
+        return (bItem?.publishedAt?.getTime() ?? 0) - (aItem?.publishedAt?.getTime() ?? 0);
       }
       return b.score - a.score;
     });
@@ -603,10 +553,7 @@ async function rankForTopic(
       topic: topic.name,
       ranking_mode: topic.ranking_mode,
       selectedCount: selected.length,
-      relatedCount: selected.reduce(
-        (sum, item) => sum + item.relatedItems.length,
-        0,
-      ),
+      relatedCount: selected.reduce((sum, item) => sum + item.relatedItems.length, 0),
       threshold,
     },
     "Selected top story clusters for topic",
@@ -643,9 +590,7 @@ export async function rankTopics(
     "Ranking topics as their source fetches complete",
   );
 
-  const sourceTopics = new Map(
-    config.sources.map((source) => [source.name, source.topics]),
-  );
+  const sourceTopics = new Map(config.sources.map((source) => [source.name, source.topics]));
   const results = await mapTopicsAsCandidatesReady(
     config.topics,
     getCandidates,
@@ -726,10 +671,7 @@ export async function rankTopics(
       rankedCount: ranked.length,
       topCount: ranked.length,
       perTopic: Object.fromEntries(
-        config.topics.map((t) => [
-          t.name,
-          ranked.filter((i) => i.topic === t.name).length,
-        ]),
+        config.topics.map((t) => [t.name, ranked.filter((i) => i.topic === t.name).length]),
       ),
       failedTopics: errors.map((e) => e.topic),
       threshold: config.relevance_threshold,

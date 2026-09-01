@@ -2,10 +2,7 @@ import { Bot, GrammyError, HttpError, InputFile } from "grammy";
 import { formatUsd } from "../lib/money.ts";
 import { logger } from "../lib/logger.ts";
 import type { RankedItem, TopicConfig } from "../lib/types.ts";
-import {
-  newsletterFilename,
-  renderNewsletterHtml,
-} from "../newsletter/index.ts";
+import { newsletterFilename, renderNewsletterHtml } from "../newsletter/index.ts";
 import type { Store } from "../store/index.ts";
 
 export function createBot(token: string): Bot {
@@ -51,8 +48,7 @@ export function resolveTopicThreads(
   const map = new Map<string, number>();
 
   for (const topic of topics) {
-    const threadId =
-      topic.telegram_thread_id ?? store.getTopicThreadId(groupId, topic.name);
+    const threadId = topic.telegram_thread_id ?? store.getTopicThreadId(groupId, topic.name);
 
     if (threadId === null || threadId === undefined) {
       throw missingTopicError(topic.name);
@@ -79,11 +75,7 @@ export const ensureForumTopics = resolveTopicThreads;
 
 function isMissingTopicSendError(err: unknown): boolean {
   const description =
-    err instanceof GrammyError
-      ? err.description
-      : err instanceof Error
-        ? err.message
-        : String(err);
+    err instanceof GrammyError ? err.description : err instanceof Error ? err.message : String(err);
   const text = description.toLowerCase();
   return (
     text.includes("message thread not found") ||
@@ -133,16 +125,10 @@ export async function postNewsletter(
   );
 
   try {
-    await bot.api.sendDocument(
-      groupId,
-      new InputFile(Buffer.from(html, "utf8"), filename),
-      {
-        caption,
-        ...(opts.messageThreadId !== undefined
-          ? { message_thread_id: opts.messageThreadId }
-          : {}),
-      },
-    );
+    await bot.api.sendDocument(groupId, new InputFile(Buffer.from(html, "utf8"), filename), {
+      caption,
+      ...(opts.messageThreadId !== undefined ? { message_thread_id: opts.messageThreadId } : {}),
+    });
   } catch (err) {
     logger.error(
       {
@@ -182,11 +168,7 @@ export async function postNewsletter(
   return opts.items.length;
 }
 
-export async function sendFailureAlert(
-  bot: Bot,
-  chatId: string,
-  message: string,
-): Promise<void> {
+export async function sendFailureAlert(bot: Bot, chatId: string, message: string): Promise<void> {
   try {
     await bot.api.sendMessage(chatId, `news-telegram-agent failure:\n${message}`);
     logger.info({ event: "telegram_alert", chat: chatId }, "Sent failure alert");

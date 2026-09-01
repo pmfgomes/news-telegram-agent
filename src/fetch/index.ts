@@ -1,12 +1,7 @@
 import * as cheerio from "cheerio";
 import Parser from "rss-parser";
 import { logger } from "../lib/logger.ts";
-import type {
-  AppConfig,
-  NewsItem,
-  SourceConfig,
-  TopicConfig,
-} from "../lib/types.ts";
+import type { AppConfig, NewsItem, SourceConfig, TopicConfig } from "../lib/types.ts";
 
 const USER_AGENT =
   "Mozilla/5.0 (compatible; news-telegram-agent/1.0; +https://github.com/pmfgomes/news-telegram-agent)";
@@ -42,7 +37,7 @@ function canonicalizeLink(raw: string): string {
   try {
     const url = new URL(raw.trim());
     url.hash = "";
-    for (const key of [...url.searchParams.keys()]) {
+    for (const key of Array.from(url.searchParams.keys())) {
       if (
         key.startsWith("utm_") ||
         key === "at_medium" ||
@@ -133,8 +128,7 @@ async function fetchRss(source: SourceConfig): Promise<NewsItem[]> {
     const title = entry.title?.trim();
     if (!link || !title) continue;
 
-    const publishedAt =
-      parseDate(entry.isoDate) ?? parseDate(entry.pubDate) ?? null;
+    const publishedAt = parseDate(entry.isoDate) ?? parseDate(entry.pubDate) ?? null;
 
     items.push({
       id: canonicalId(source.name, link, entry.guid),
@@ -212,10 +206,7 @@ async function fetchScrape(source: SourceConfig): Promise<NewsItem[]> {
   return items;
 }
 
-async function fetchSource(
-  source: SourceConfig,
-  latestPerSource: number,
-): Promise<NewsItem[]> {
+async function fetchSource(source: SourceConfig, latestPerSource: number): Promise<NewsItem[]> {
   let items: NewsItem[];
 
   if (source.rss_url) {
@@ -305,10 +296,7 @@ export function startSourceFetches(config: AppConfig): SourceFetches {
           return [];
         }
       })();
-      const entry: readonly [string, Promise<NewsItem[]>] = [
-        source.name,
-        promise,
-      ];
+      const entry: readonly [string, Promise<NewsItem[]>] = [source.name, promise];
       return entry;
     }),
   );

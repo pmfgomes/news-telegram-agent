@@ -21,38 +21,40 @@ const topicObjectSchema = z.object({
 });
 
 /** Accept object topics, "Name: interest" strings, or YAML single-key maps. */
-export const topicConfigSchema = z.preprocess((raw) => {
-  if (typeof raw === "string") {
-    const trimmed = raw.trim();
-    if (!trimmed) return raw;
-    const split = trimmed.indexOf(":");
-    if (split === -1) return { name: trimmed, interest: trimmed };
-    return {
-      name: trimmed.slice(0, split).trim(),
-      interest: trimmed.slice(split + 1).trim() || trimmed,
-    };
-  }
-
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    const obj = raw as Record<string, unknown>;
-    if (typeof obj.name === "string") return obj;
-
-    const entries = Object.entries(obj);
-    if (entries.length === 1) {
-      const [key, value] = entries[0]!;
-      return { name: key.trim(), interest: String(value).trim() || key.trim() };
+export const topicConfigSchema = z
+  .preprocess((raw) => {
+    if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (!trimmed) return raw;
+      const split = trimmed.indexOf(":");
+      if (split === -1) return { name: trimmed, interest: trimmed };
+      return {
+        name: trimmed.slice(0, split).trim(),
+        interest: trimmed.slice(split + 1).trim() || trimmed,
+      };
     }
-  }
 
-  return raw;
-}, topicObjectSchema).transform((topic) => ({
-  name: topic.name,
-  interest: topic.interest?.trim() || topic.name,
-  ranking_mode: topic.ranking_mode,
-  ...(topic.telegram_thread_id !== undefined
-    ? { telegram_thread_id: topic.telegram_thread_id }
-    : {}),
-}));
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const obj = raw as Record<string, unknown>;
+      if (typeof obj.name === "string") return obj;
+
+      const entries = Object.entries(obj);
+      if (entries.length === 1) {
+        const [key, value] = entries[0]!;
+        return { name: key.trim(), interest: String(value).trim() || key.trim() };
+      }
+    }
+
+    return raw;
+  }, topicObjectSchema)
+  .transform((topic) => ({
+    name: topic.name,
+    interest: topic.interest?.trim() || topic.name,
+    ranking_mode: topic.ranking_mode,
+    ...(topic.telegram_thread_id !== undefined
+      ? { telegram_thread_id: topic.telegram_thread_id }
+      : {}),
+  }));
 
 export const appConfigSchema = z
   .object({

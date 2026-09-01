@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { RankedItem } from "../lib/types.ts";
-import {
-  groupItemsByTopicOrder,
-  renderNewsletterHtml,
-  safeHref,
-  slugifyTopic,
-} from "./index.ts";
+import { groupItemsByTopicOrder, renderNewsletterHtml, safeHref, slugifyTopic } from "./index.ts";
 
 function item(
   overrides: Partial<RankedItem> & Pick<RankedItem, "id" | "title" | "topic">,
@@ -49,10 +44,7 @@ describe("groupItemsByTopicOrder", () => {
   test("preserves configured topic order and empty sections", () => {
     const sections = groupItemsByTopicOrder(
       ["AI", "Gaming", "Portugal"],
-      [
-        item({ id: "1", title: "A", topic: "Gaming" }),
-        item({ id: "2", title: "B", topic: "AI" }),
-      ],
+      [item({ id: "1", title: "A", topic: "Gaming" }), item({ id: "2", title: "B", topic: "AI" })],
     );
 
     expect(sections.map((s) => s.name)).toEqual(["AI", "Gaming", "Portugal"]);
@@ -69,9 +61,7 @@ describe("groupItemsByTopicOrder", () => {
 
   test("empty topics still render empty item lists", () => {
     const sections = groupItemsByTopicOrder(["Portugal"], []);
-    expect(sections).toEqual([
-      { name: "Portugal", slug: "portugal", items: [] },
-    ]);
+    expect(sections).toEqual([{ name: "Portugal", slug: "portugal", items: [] }]);
   });
 });
 
@@ -132,7 +122,7 @@ describe("renderNewsletterHtml", () => {
     });
 
     expect(html).not.toContain("javascript:");
-    expect(html).toContain("<span class=\"story-title\">Bad link</span>");
+    expect(html).toContain('<span class="story-title">Bad link</span>');
   });
 
   test("shows billed cost after the title", () => {

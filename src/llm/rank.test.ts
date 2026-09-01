@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fetchItemsForTopic, type SourceFetches } from "../fetch/index.ts";
-import type {
-  AppConfig,
-  NewsItem,
-  TopicConfig,
-} from "../lib/types.ts";
+import type { AppConfig, NewsItem, TopicConfig } from "../lib/types.ts";
 import {
   buildRankCompletionParams,
   mapTopicsAsCandidatesReady,
@@ -116,8 +112,7 @@ describe("buildRankCompletionParams", () => {
     expect(params.messages).toEqual([
       {
         role: "system",
-        content:
-          "You are a precise news clustering and ranking assistant. Reply with JSON only.",
+        content: "You are a precise news clustering and ranking assistant. Reply with JSON only.",
       },
       { role: "user", content: "rank these candidates" },
     ]);
@@ -143,9 +138,7 @@ describe("parseRankings", () => {
   });
 
   test("parses JSON wrapped in prose", () => {
-    expect(parseRankings(`Here is the ranking:\n${json}\nThanks.`)).toEqual([
-      row,
-    ]);
+    expect(parseRankings(`Here is the ranking:\n${json}\nThanks.`)).toEqual([row]);
   });
 
   test("parses array-of-parts content", () => {
@@ -165,9 +158,7 @@ describe("parseRankings", () => {
   });
 
   test("rejects truncated JSON", () => {
-    expect(() => parseRankings('{"rankings":[{"id":"a"')).toThrow(
-      "Failed to parse LLM JSON",
-    );
+    expect(() => parseRankings('{"rankings":[{"id":"a"')).toThrow("Failed to parse LLM JSON");
   });
 
   test("labels each failure with the stage that rejected it", () => {
