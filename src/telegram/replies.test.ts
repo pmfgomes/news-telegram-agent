@@ -12,7 +12,7 @@ function charge(
 ): OpenRouterCharge {
   return {
     model: "google/gemini-2.5-flash-lite",
-    generationId: "gen-1",
+    runId: "run-1",
     promptTokens: 100,
     completionTokens: 50,
     ...overrides,
@@ -23,9 +23,7 @@ describe("formatTopicList", () => {
   test("joins one, two, and many names", () => {
     expect(formatTopicList(["AI"])).toBe("AI");
     expect(formatTopicList(["AI", "Gaming"])).toBe("AI and Gaming");
-    expect(formatTopicList(["AI", "Gaming", "World news"])).toBe(
-      "AI, Gaming, and World news",
-    );
+    expect(formatTopicList(["AI", "Gaming", "World news"])).toBe("AI, Gaming, and World news");
   });
 });
 
@@ -86,9 +84,7 @@ describe("formatPipelineReply", () => {
         rankingFailedTopics: [],
         charges,
       }),
-    ).toBe(
-      "News run failed: Topic is missing: Algarve\n\nOpenRouter total: $0.002",
-    );
+    ).toBe("News run failed: Topic is missing: Algarve\n\nOpenRouter total: $0.002");
   });
 
   test("uses Error in … when every topic failed ranking", () => {

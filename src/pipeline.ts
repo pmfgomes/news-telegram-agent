@@ -2,20 +2,13 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Bot } from "grammy";
 import { dataDir } from "./config/index.ts";
-import {
-  fetchItemsForTopic,
-  startSourceFetches,
-} from "./fetch/index.ts";
+import { fetchItemsForTopic, startSourceFetches } from "./fetch/index.ts";
 import { rankTopics } from "./llm/index.ts";
 import type { OpenRouterCharge } from "./llm/rank.ts";
 import type { AppConfig, EnvSecrets } from "./lib/schemas.ts";
 import { logger } from "./lib/logger.ts";
 import type { Store } from "./store/index.ts";
-import {
-  postNewsletter,
-  resolveTopicThreads,
-  sendFailureAlert,
-} from "./telegram/index.ts";
+import { postNewsletter, resolveTopicThreads, sendFailureAlert } from "./telegram/index.ts";
 
 export type PipelineResult =
   | {
@@ -53,22 +46,19 @@ export async function runNewsPipeline(opts: {
   let rankingFailedTopics: string[] = [];
 
   try {
-    const threadIds = resolveTopicThreads(
-      secrets.telegramGroupId,
-      config.topics,
-      store,
-    );
+    const threadIds = resolveTopicThreads(secrets.telegramGroupId, config.topics, store);
 
     const sourceFetches = startSourceFetches(config);
     let hadFreshCandidates = false;
-    const { items: ranked, cost, errors, charges: rankedCharges } = await rankTopics(
+    const {
+      items: ranked,
+      cost,
+      errors,
+      charges: rankedCharges,
+    } = await rankTopics(
       config,
       async (topic) => {
-        const fetched = await fetchItemsForTopic(
-          config,
-          topic,
-          sourceFetches,
-        );
+        const fetched = await fetchItemsForTopic(config, topic, sourceFetches);
         const fresh = store.filterNew(fetched);
         if (fresh.length > 0) hadFreshCandidates = true;
         logger.info(
@@ -92,8 +82,7 @@ export async function runNewsPipeline(opts: {
       },
     );
     totalCost = cost;
-    const billedCharges =
-      rankedCharges.length > 0 ? rankedCharges : [...charges];
+    const billedCharges = rankedCharges.length > 0 ? rankedCharges : [...charges];
     rankingFailedTopics = errors.map((error) => error.topic);
 
     if (!hadFreshCandidates) {
@@ -118,9 +107,7 @@ export async function runNewsPipeline(opts: {
 
     if (ranked.length === 0) {
       if (errors.length > 0) {
-        throw new Error(
-          errors.map((error) => `${error.topic}: ${error.error}`).join("; "),
-        );
+        throw new Error(errors.map((error) => `${error.topic}: ${error.error}`).join("; "));
       }
       const summary = {
         event: "run_complete",
@@ -165,10 +152,7 @@ export async function runNewsPipeline(opts: {
       output: "newsletter_html",
       ranking_failed_topics: rankingFailedTopics,
       per_topic: Object.fromEntries(
-        config.topics.map((t) => [
-          t.name,
-          ranked.filter((i) => i.topic === t.name).length,
-        ]),
+        config.topics.map((t) => [t.name, ranked.filter((i) => i.topic === t.name).length]),
       ),
     };
     logger.info(summary, "Run complete");

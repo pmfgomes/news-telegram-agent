@@ -38,12 +38,12 @@ docker compose up -d
 
 Logs (requests, failures, LLM tokens + OpenRouter billed `cost`) go to container stdout as JSON (pino). Follow with `docker compose logs -f`.
 
-When an LLM ranking response fails to parse, the complete raw completion is saved to `data/logs/llm-failures/` (one JSON file per failure) and the `llm_json_parse_failed` log line carries `stage` (where parsing rejected it), `finish_reason` / `native_finish_reason`, `provider`, head/tail previews, and `dump_path` pointing at that file. The `/news` closing reply reports the OpenRouter total and, if ranking failed for some topics, `Error in …` so you can look those topics up in the logs. The HTML newsletter still shows the total after the title.
+When an LLM ranking response fails to parse, the collected TanStack stream transcript is saved to `data/logs/llm-failures/` (one JSON file per failure) and the `llm_json_parse_failed` log line carries `stage` (where parsing rejected it), `finish_reason`, `run_id`, head/tail previews, and `dump_path` pointing at that file. The `/news` closing reply reports the OpenRouter total and, if ranking failed for some topics, `Error in …` so you can look those topics up in the logs. The HTML newsletter still shows the total after the title.
 
 ## Commands
 
-| Command | Who | Effect |
-|---|---|---|
+| Command | Who                                                                    | Effect                                                    |
+| ------- | ---------------------------------------------------------------------- | --------------------------------------------------------- |
 | `/news` | Group admins only (`creator` / `administrator`) in `TELEGRAM_GROUP_ID` | Starts a news run and sends an HTML newsletter attachment |
 
 - If a run is already in progress, the bot replies that it is already getting the news and does not start another.
@@ -55,16 +55,16 @@ When an LLM ranking response fails to parse, the complete raw completion is save
 
 ## Environment
 
-| Variable | Required | Description |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | yes | BotFather token |
-| `TELEGRAM_GROUP_ID` | yes | Forum group `@username` or numeric id (usually `-100...`) |
-| `OPENROUTER_API_KEY` | yes | OpenRouter API key |
-| `OPENROUTER_MODEL` | no | Default `google/gemini-2.5-flash-lite` |
-| `DATA_DIR` | no | Host path mounted to `/app/data` (default `./data`) |
-| `CONFIG_FILE` | no | Host path mounted over `/app/src/config/config.yaml` (default `./src/config/config.yaml`) |
-| `TELEGRAM_ALERT_CHAT_ID` | no | Personal chat id for failure alerts |
-| `LOG_LEVEL` | no | Default `info` |
+| Variable                 | Required | Description                                                                               |
+| ------------------------ | -------- | ----------------------------------------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`     | yes      | BotFather token                                                                           |
+| `TELEGRAM_GROUP_ID`      | yes      | Forum group `@username` or numeric id (usually `-100...`)                                 |
+| `OPENROUTER_API_KEY`     | yes      | OpenRouter API key                                                                        |
+| `OPENROUTER_MODEL`       | no       | Default `google/gemini-2.5-flash-lite`                                                    |
+| `DATA_DIR`               | no       | Host path mounted to `/app/data` (default `./data`)                                       |
+| `CONFIG_FILE`            | no       | Host path mounted over `/app/src/config/config.yaml` (default `./src/config/config.yaml`) |
+| `TELEGRAM_ALERT_CHAT_ID` | no       | Personal chat id for failure alerts                                                       |
+| `LOG_LEVEL`              | no       | Default `info`                                                                            |
 
 `TELEGRAM_CHAT_ID` / `TELEGRAM_CHANNEL_ID` are accepted as aliases for `TELEGRAM_GROUP_ID`.
 

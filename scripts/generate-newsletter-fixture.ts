@@ -29,10 +29,7 @@ const topics = [
   "Algarve",
 ] as const;
 
-const storyBlueprints: Record<
-  (typeof topics)[number],
-  { source: string; titles: string[] }
-> = {
+const storyBlueprints: Record<(typeof topics)[number], { source: string; titles: string[] }> = {
   Portugal: {
     source: "RTP",
     titles: [

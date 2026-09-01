@@ -1,0 +1,14 @@
+---
+description: Run Oxc formatter and linter before completing file-changing tasks
+alwaysApply: true
+---
+
+# Oxc Quality Gate
+
+Before marking any file-changing task complete:
+
+1. Run `bun run format` to apply Oxfmt.
+2. Run `bun run quality` (`format:check` + `lint`) and fix all findings.
+3. If checks fail, fix the issues or report the blocker. Do not claim the task is done.
+
+Use `bun run lint:fix` only when auto-fixes are safe. Do not weaken lint rules to silence failures.

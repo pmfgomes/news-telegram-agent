@@ -1,15 +1,12 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import OpenAI from "openai";
+import { chat, EventType, type RunFinishedEvent, type StreamChunk } from "@tanstack/ai";
+import { createOpenRouterText } from "@tanstack/ai-openrouter";
+import { OPENROUTER_CHAT_MODELS } from "@tanstack/ai-openrouter/model-meta";
 import { ZodError } from "zod";
 import { dataDir } from "../config/index.ts";
 import { logger } from "../lib/logger.ts";
-import {
-  formatZodError,
-  llmRankResponseSchema,
-  openRouterUsageSchema,
-  type LlmRankRow,
-} from "../lib/schemas.ts";
+import { formatZodError, llmRankResponseSchema, type LlmRankRow } from "../lib/schemas.ts";
 import type { AppConfig, NewsItem, RankedItem, TopicConfig } from "../lib/types.ts";
 
 export type RankTopicError = {
@@ -20,7 +17,7 @@ export type RankTopicError = {
 export type OpenRouterCharge = {
   topic: string;
   model: string;
-  generationId: string;
+  runId: string;
   cost: number;
   promptTokens: number;
   completionTokens: number;
@@ -42,6 +39,11 @@ export const RANK_MAX_TOKENS = 16384;
  */
 export const RANK_REASONING_MAX_TOKENS = 2048;
 const CONTENT_PREVIEW_LIMIT = 400;
+const OPENROUTER_ATTRIBUTION = {
+  httpReferer: "https://github.com/pmfgomes/news-telegram-agent",
+  appTitle: "news-telegram-agent",
+} as const;
+const CATALOG_MODELS = new Set<string>(OPENROUTER_CHAT_MODELS);
 
 export type RankParseStage =
   | "empty_content"
@@ -55,11 +57,7 @@ export class RankParseError extends Error {
   /** Exact string handed to JSON.parse, when extraction got that far. */
   readonly payload: string | null;
 
-  constructor(
-    message: string,
-    stage: RankParseStage,
-    payload: string | null = null,
-  ) {
+  constructor(message: string, stage: RankParseStage, payload: string | null = null) {
     super(message);
     this.name = "RankParseError";
     this.stage = stage;
@@ -67,65 +65,188 @@ export class RankParseError extends Error {
   }
 }
 
-export type TopicCandidatesProvider = (
-  topic: TopicConfig,
-) => Promise<NewsItem[]>;
+export class RankStreamError extends Error {
+  readonly code?: string;
+  readonly rawEvent?: unknown;
 
-/** OpenRouter ranking request fields the OpenAI SDK types do not cover. */
-export type OpenRouterRankCompletionParams = {
-  model: string;
-  temperature: number;
-  max_tokens: number;
-  response_format: { type: "json_object" };
-  messages: OpenAI.Chat.ChatCompletionMessageParam[];
-  usage: { include: true };
-  plugins: [{ id: "response-healing" }];
-  reasoning: { max_tokens: number; exclude: true };
+  constructor(message: string, opts?: { code?: string; rawEvent?: unknown }) {
+    super(message);
+    this.name = "RankStreamError";
+    this.code = opts?.code;
+    this.rawEvent = opts?.rawEvent;
+  }
+}
+
+export type TopicCandidatesProvider = (topic: TopicConfig) => Promise<NewsItem[]>;
+
+export type OpenRouterRankChatRequest = {
+  systemPrompt: string;
+  userPrompt: string;
+  modelOptions: {
+    temperature: number;
+    maxCompletionTokens: number;
+    responseFormat: { type: "json_object" };
+    plugins: [{ id: "response-healing" }];
+    reasoning: { effort: "low" };
+    streamOptions: { includeUsage: true };
+  };
 };
 
-export function buildRankCompletionParams(opts: {
-  model: string;
-  prompt: string;
-}): OpenRouterRankCompletionParams {
+export function buildRankChatRequest(opts: { prompt: string }): OpenRouterRankChatRequest {
   return {
-    model: opts.model,
-    temperature: 0.2,
-    max_tokens: RANK_MAX_TOKENS,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a precise news clustering and ranking assistant. Reply with JSON only.",
-      },
-      { role: "user", content: opts.prompt },
-    ],
-    usage: { include: true },
-    plugins: [{ id: "response-healing" }],
-    reasoning: {
-      max_tokens: RANK_REASONING_MAX_TOKENS,
-      exclude: true,
-    },
+    systemPrompt: "You are a precise news clustering and ranking assistant. Reply with JSON only.",
+    userPrompt: opts.prompt,
+    modelOptions: buildRankModelOptions(),
   };
 }
+
+export function buildRankModelOptions(): OpenRouterRankChatRequest["modelOptions"] {
+  return {
+    temperature: 0.2,
+    maxCompletionTokens: RANK_MAX_TOKENS,
+    responseFormat: { type: "json_object" },
+    plugins: [{ id: "response-healing" }],
+    reasoning: { effort: "low" },
+    streamOptions: { includeUsage: true },
+  };
+}
+
+export type RankStreamCollected = {
+  content: string;
+  runId: string;
+  servedModel: string | null;
+  finishReason: "stop" | "length" | "content_filter" | "tool_calls" | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cost: number;
+  upstreamInferenceCost?: number;
+  events: StreamChunk[];
+};
 
 function emptyRankResult(): RankResult {
   return { items: [], cost: 0, charges: [], errors: [] };
 }
 
+function resolveCatalogModel(model: string): (typeof OPENROUTER_CHAT_MODELS)[number] {
+  if (!CATALOG_MODELS.has(model)) {
+    logger.warn(
+      { event: "llm_model_not_in_catalog", model },
+      "OpenRouter model is outside TanStack catalog; proceeding anyway",
+    );
+  }
+  return model as (typeof OPENROUTER_CHAT_MODELS)[number];
+}
+
+function normalizeStreamUsage(usage: RunFinishedEvent["usage"]): {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cost: number;
+  upstreamInferenceCost?: number;
+} {
+  if (!usage) {
+    return { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0 };
+  }
+
+  const entry = Array.isArray(usage) ? usage.at(-1) : usage;
+  if (!entry || typeof entry !== "object") {
+    return { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0 };
+  }
+
+  const promptTokens =
+    "promptTokens" in entry && typeof entry.promptTokens === "number" ? entry.promptTokens : 0;
+  const completionTokens =
+    "completionTokens" in entry && typeof entry.completionTokens === "number"
+      ? entry.completionTokens
+      : 0;
+  const totalTokens =
+    "totalTokens" in entry && typeof entry.totalTokens === "number"
+      ? entry.totalTokens
+      : promptTokens + completionTokens;
+  const cost = "cost" in entry && typeof entry.cost === "number" ? entry.cost : 0;
+  const costDetails =
+    "costDetails" in entry && entry.costDetails && typeof entry.costDetails === "object"
+      ? entry.costDetails
+      : undefined;
+  const upstreamInferenceCost =
+    costDetails && "upstreamCost" in costDetails && typeof costDetails.upstreamCost === "number"
+      ? costDetails.upstreamCost
+      : undefined;
+
+  return { promptTokens, completionTokens, totalTokens, cost, upstreamInferenceCost };
+}
+
+/** Drain a TanStack chat stream into assistant text plus billed usage metadata. */
+export async function collectRankStream(
+  stream: AsyncIterable<StreamChunk>,
+): Promise<RankStreamCollected> {
+  let content = "";
+  let runId = "";
+  let servedModel: string | null = null;
+  let finishReason: RankStreamCollected["finishReason"] = null;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let totalTokens = 0;
+  let cost = 0;
+  let upstreamInferenceCost: number | undefined;
+  const events: StreamChunk[] = [];
+
+  for await (const chunk of stream) {
+    events.push(chunk);
+
+    if (chunk.type === EventType.RUN_STARTED && chunk.runId) {
+      runId = chunk.runId;
+    }
+
+    if (chunk.type === EventType.TEXT_MESSAGE_CONTENT) {
+      if (typeof chunk.content === "string") {
+        content = chunk.content;
+      } else if (typeof chunk.delta === "string") {
+        content += chunk.delta;
+      }
+    }
+
+    if (chunk.type === EventType.RUN_FINISHED) {
+      if (chunk.runId) runId = chunk.runId;
+      servedModel = chunk.model ?? servedModel;
+      finishReason = chunk.finishReason ?? finishReason;
+      const usage = normalizeStreamUsage(chunk.usage);
+      promptTokens = usage.promptTokens;
+      completionTokens = usage.completionTokens;
+      totalTokens = usage.totalTokens;
+      cost = usage.cost;
+      upstreamInferenceCost = usage.upstreamInferenceCost;
+    }
+
+    if (chunk.type === EventType.RUN_ERROR) {
+      throw new RankStreamError(chunk.message ?? "OpenRouter stream error", {
+        code: chunk.code ?? chunk.error?.code,
+        rawEvent: chunk.rawEvent,
+      });
+    }
+  }
+
+  return {
+    content,
+    runId,
+    servedModel,
+    finishReason,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cost,
+    upstreamInferenceCost,
+    events,
+  };
+}
+
 export async function mapTopicsAsCandidatesReady<T>(
   topics: TopicConfig[],
   getCandidates: TopicCandidatesProvider,
-  processTopic: (
-    topic: TopicConfig,
-    candidates: NewsItem[],
-  ) => Promise<T>,
+  processTopic: (topic: TopicConfig, candidates: NewsItem[]) => Promise<T>,
 ): Promise<T[]> {
-  return Promise.all(
-    topics.map(async (topic) =>
-      processTopic(topic, await getCandidates(topic)),
-    ),
-  );
+  return Promise.all(topics.map(async (topic) => processTopic(topic, await getCandidates(topic))));
 }
 
 function topicLabel(topic: TopicConfig): string {
@@ -136,19 +257,13 @@ function formatCandidates(candidates: NewsItem[]): string {
   return candidates
     .map((c, i) => {
       const summary = c.summary ? ` | summary: ${c.summary.slice(0, 180)}` : "";
-      const published = c.publishedAt
-        ? ` | published=${c.publishedAt.toISOString()}`
-        : "";
+      const published = c.publishedAt ? ` | published=${c.publishedAt.toISOString()}` : "";
       return `${i + 1}. id=${JSON.stringify(c.id)} | source=${c.source} | title=${JSON.stringify(c.title)}${summary}${published} | link=${c.link}`;
     })
     .join("\n");
 }
 
-function buildFilterPrompt(
-  topic: TopicConfig,
-  candidates: NewsItem[],
-  topN: number,
-): string {
+function buildFilterPrompt(topic: TopicConfig, candidates: NewsItem[], topN: number): string {
   return `You organize and rank news into Google News-style story clusters for one Telegram topic.
 
 Topic:
@@ -177,11 +292,7 @@ Candidates:
 ${formatCandidates(candidates)}`;
 }
 
-function buildLatestPrompt(
-  topic: TopicConfig,
-  candidates: NewsItem[],
-  topN: number,
-): string {
+function buildLatestPrompt(topic: TopicConfig, candidates: NewsItem[], topN: number): string {
   return `You cluster news for one Telegram topic. Sources are already on-topic — do NOT filter by relevance or place name.
 
 Topic:
@@ -208,11 +319,7 @@ Candidates:
 ${formatCandidates(candidates)}`;
 }
 
-function buildPrompt(
-  topic: TopicConfig,
-  candidates: NewsItem[],
-  topN: number,
-): string {
+function buildPrompt(topic: TopicConfig, candidates: NewsItem[], topN: number): string {
   return topic.ranking_mode === "latest"
     ? buildLatestPrompt(topic, candidates, topN)
     : buildFilterPrompt(topic, candidates, topN);
@@ -232,18 +339,17 @@ function previewTail(text: string): string | undefined {
 }
 
 /**
- * Persist the complete failing completion (all choices, usage, provider
- * metadata) so a parse failure can be diagnosed from the exact payload
- * instead of a log preview. Returns the file path, or null if the dump
- * itself failed (never breaks the run).
+ * Persist the collected stream transcript so a parse failure can be diagnosed
+ * from the exact payload instead of a log preview. Returns the file path, or
+ * null if the dump itself failed (never breaks the run).
  */
-function dumpFailedCompletion(opts: {
+function dumpFailedRankStream(opts: {
   topic: string;
   model: string;
   stage: RankParseStage | null;
   error: string;
   content: string;
-  completion: OpenAI.Chat.ChatCompletion;
+  transcript: StreamChunk[];
 }): string | null {
   const dir = join(dataDir(), "logs", "llm-failures");
   const slug =
@@ -251,10 +357,7 @@ function dumpFailedCompletion(opts: {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "topic";
-  const path = join(
-    dir,
-    `${new Date().toISOString().replace(/[:.]/g, "-")}-${slug}.json`,
-  );
+  const path = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${slug}.json`);
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -267,7 +370,7 @@ function dumpFailedCompletion(opts: {
           stage: opts.stage,
           error: opts.error,
           content: opts.content,
-          completion: opts.completion,
+          transcript: opts.transcript,
         },
         null,
         2,
@@ -315,10 +418,7 @@ export function completionText(content: unknown): string {
 export function extractJsonObject(content: string): string {
   let text = content.replace(/^\uFEFF/, "").trim();
   if (!text) {
-    throw new RankParseError(
-      "Failed to parse LLM JSON: empty response",
-      "empty_content",
-    );
+    throw new RankParseError("Failed to parse LLM JSON: empty response", "empty_content");
   }
 
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -329,10 +429,7 @@ export function extractJsonObject(content: string): string {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end <= start) {
-    throw new RankParseError(
-      "Failed to parse LLM JSON: no JSON object found",
-      "no_json_object",
-    );
+    throw new RankParseError("Failed to parse LLM JSON: no JSON object found", "no_json_object");
   }
   return text.slice(start, end + 1);
 }
@@ -344,11 +441,7 @@ export function parseRankings(content: unknown): LlmRankRow[] {
   try {
     json = JSON.parse(payload);
   } catch (err) {
-    throw new RankParseError(
-      `Failed to parse LLM JSON: ${String(err)}`,
-      "invalid_json",
-      payload,
-    );
+    throw new RankParseError(`Failed to parse LLM JSON: ${String(err)}`, "invalid_json", payload);
   }
 
   try {
@@ -377,15 +470,12 @@ function candidatesForTopic(
         .get(candidate.source)
         ?.some((name) => name.toLowerCase() === topic.name.toLowerCase()),
     )
-    .sort(
-      (a, b) =>
-        (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0),
-    )
+    .sort((a, b) => (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0))
     .slice(0, maxCandidates);
 }
 
 async function rankForTopic(
-  client: OpenAI,
+  apiKey: string,
   topic: TopicConfig,
   candidates: NewsItem[],
   opts: {
@@ -397,8 +487,7 @@ async function rankForTopic(
   },
 ): Promise<RankResult> {
   const started = Date.now();
-  const threshold =
-    topic.ranking_mode === "latest" ? 0 : opts.threshold;
+  const threshold = topic.ranking_mode === "latest" ? 0 : opts.threshold;
   logger.info(
     {
       event: "llm_request",
@@ -407,55 +496,50 @@ async function rankForTopic(
       ranking_mode: topic.ranking_mode,
       candidateCount: candidates.length,
       candidateSources: Object.fromEntries(
-        [...new Set(candidates.map((candidate) => candidate.source))].map(
-          (source) => [
-            source,
-            candidates.filter((candidate) => candidate.source === source).length,
-          ],
-        ),
+        [...new Set(candidates.map((candidate) => candidate.source))].map((source) => [
+          source,
+          candidates.filter((candidate) => candidate.source === source).length,
+        ]),
       ),
       interest: topic.interest,
     },
     "Requesting LLM ranking for topic",
   );
 
-  const completion = await client.chat.completions.create(
-    buildRankCompletionParams({
-      model: opts.model,
-      prompt: buildPrompt(topic, candidates, opts.topN),
-    }) as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-  );
+  const catalogModel = resolveCatalogModel(opts.model);
+  const adapter = createOpenRouterText(catalogModel, apiKey, OPENROUTER_ATTRIBUTION);
+  const request = buildRankChatRequest({
+    prompt: buildPrompt(topic, candidates, opts.topN),
+  });
+  const stream = chat({
+    adapter,
+    systemPrompts: [request.systemPrompt],
+    messages: [{ role: "user", content: request.userPrompt }],
+    modelOptions: request.modelOptions,
+  });
+  const collected = await collectRankStream(stream);
 
   const latencyMs = Date.now() - started;
-  const choice = completion.choices[0];
-  const content = completionText(choice?.message?.content);
-  const finishReason = choice?.finish_reason ?? null;
-  // OpenRouter extensions that the OpenAI SDK does not type.
-  const provider =
-    "provider" in completion && typeof completion.provider === "string"
-      ? completion.provider
-      : null;
-  const nativeFinishReason =
-    choice !== undefined &&
-    "native_finish_reason" in choice &&
-    typeof choice.native_finish_reason === "string"
-      ? choice.native_finish_reason
-      : null;
-  const usage = openRouterUsageSchema.catch({}).parse(completion.usage ?? {});
-  const promptTokens = usage.prompt_tokens ?? 0;
-  const completionTokens = usage.completion_tokens ?? 0;
-  const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
-  const cost = usage.cost ?? 0;
-  const upstreamCost = usage.cost_details?.upstream_inference_cost;
+  const content = completionText(collected.content);
+  const finishReason = collected.finishReason;
+  const {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cost,
+    upstreamInferenceCost,
+    servedModel,
+    runId,
+    events,
+  } = collected;
 
   logger.info(
     {
       event: "llm_response",
       model: opts.model,
-      served_model: completion.model,
-      provider,
+      served_model: servedModel,
       topic: topic.name,
-      generation_id: completion.id,
+      run_id: runId,
       finish_reason: finishReason,
       content_length: content.length,
       latency_ms: latencyMs,
@@ -471,12 +555,12 @@ async function rankForTopic(
       event: "llm_cost",
       model: opts.model,
       topic: topic.name,
-      generation_id: completion.id,
+      run_id: runId,
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       total_tokens: totalTokens,
       cost,
-      upstream_inference_cost: upstreamCost,
+      upstream_inference_cost: upstreamInferenceCost,
     },
     "OpenRouter billed cost",
   );
@@ -484,7 +568,7 @@ async function rankForTopic(
   const charge: OpenRouterCharge = {
     topic: topic.name,
     model: opts.model,
-    generationId: completion.id ?? "",
+    runId,
     cost,
     promptTokens,
     completionTokens,
@@ -511,27 +595,23 @@ async function rankForTopic(
     const error = `${message}${truncated}`;
     const stage = err instanceof RankParseError ? err.stage : null;
     const payload = err instanceof RankParseError ? err.payload : null;
-    const dumpPath = dumpFailedCompletion({
+    const dumpPath = dumpFailedRankStream({
       topic: topic.name,
       model: opts.model,
       stage,
       error,
       content,
-      completion,
+      transcript: events,
     });
     logger.error(
       {
         event: "llm_json_parse_failed",
         model: opts.model,
-        served_model: completion.model,
-        provider,
+        served_model: servedModel,
         topic: topic.name,
-        generation_id: completion.id,
+        run_id: runId,
         stage,
         finish_reason: finishReason,
-        native_finish_reason: nativeFinishReason,
-        refusal: choice?.message?.refusal ?? null,
-        choice_count: completion.choices.length,
         completion_tokens: completionTokens,
         max_tokens: RANK_MAX_TOKENS,
         content_length: content.length,
@@ -558,10 +638,7 @@ async function rankForTopic(
       if (topic.ranking_mode === "latest") {
         const aItem = candidates.find((c) => c.id === a.id);
         const bItem = candidates.find((c) => c.id === b.id);
-        return (
-          (bItem?.publishedAt?.getTime() ?? 0) -
-          (aItem?.publishedAt?.getTime() ?? 0)
-        );
+        return (bItem?.publishedAt?.getTime() ?? 0) - (aItem?.publishedAt?.getTime() ?? 0);
       }
       return b.score - a.score;
     });
@@ -603,10 +680,7 @@ async function rankForTopic(
       topic: topic.name,
       ranking_mode: topic.ranking_mode,
       selectedCount: selected.length,
-      relatedCount: selected.reduce(
-        (sum, item) => sum + item.relatedItems.length,
-        0,
-      ),
+      relatedCount: selected.reduce((sum, item) => sum + item.relatedItems.length, 0),
       threshold,
     },
     "Selected top story clusters for topic",
@@ -625,15 +699,6 @@ export async function rankTopics(
     onCharge?: (charge: OpenRouterCharge) => void | Promise<void>;
   },
 ): Promise<RankResult> {
-  const client = new OpenAI({
-    apiKey: opts.apiKey,
-    baseURL: "https://openrouter.ai/api/v1",
-    defaultHeaders: {
-      "HTTP-Referer": "https://github.com/pmfgomes/news-telegram-agent",
-      "X-Title": "news-telegram-agent",
-    },
-  });
-
   logger.info(
     {
       event: "llm_rank_parallel_start",
@@ -643,9 +708,7 @@ export async function rankTopics(
     "Ranking topics as their source fetches complete",
   );
 
-  const sourceTopics = new Map(
-    config.sources.map((source) => [source.name, source.topics]),
-  );
+  const sourceTopics = new Map(config.sources.map((source) => [source.name, source.topics]));
   const results = await mapTopicsAsCandidatesReady(
     config.topics,
     getCandidates,
@@ -674,7 +737,7 @@ export async function rankTopics(
       }
 
       try {
-        return await rankForTopic(client, topic, topicCandidates, {
+        return await rankForTopic(opts.apiKey, topic, topicCandidates, {
           model: opts.model,
           threshold: config.relevance_threshold,
           topN: config.top_n,
@@ -683,15 +746,11 @@ export async function rankTopics(
         });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        // OpenAI SDK errors carry the HTTP status and the OpenRouter error
-        // body (provider name, upstream message) that err.message drops.
         const apiFields =
-          err instanceof OpenAI.APIError
+          err instanceof RankStreamError
             ? {
-                status: err.status,
                 api_code: err.code,
-                api_error_type: err.type,
-                api_error: err.error,
+                api_raw_event: err.rawEvent,
               }
             : {};
         logger.error(
@@ -726,10 +785,7 @@ export async function rankTopics(
       rankedCount: ranked.length,
       topCount: ranked.length,
       perTopic: Object.fromEntries(
-        config.topics.map((t) => [
-          t.name,
-          ranked.filter((i) => i.topic === t.name).length,
-        ]),
+        config.topics.map((t) => [t.name, ranked.filter((i) => i.topic === t.name).length]),
       ),
       failedTopics: errors.map((e) => e.topic),
       threshold: config.relevance_threshold,
@@ -737,7 +793,7 @@ export async function rankTopics(
       charges: charges.map((charge) => ({
         topic: charge.topic,
         cost: charge.cost,
-        generationId: charge.generationId,
+        runId: charge.runId,
       })),
     },
     "Selected top ranked items per topic",

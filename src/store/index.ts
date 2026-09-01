@@ -25,7 +25,7 @@ function canonicalizeLink(raw: string): string {
   try {
     const url = new URL(raw.trim());
     url.hash = "";
-    for (const key of [...url.searchParams.keys()]) {
+    for (const key of Array.from(url.searchParams.keys())) {
       if (
         key.startsWith("utm_") ||
         key === "at_medium" ||
@@ -71,13 +71,11 @@ export class Store {
     `);
 
     // Older DBs may lack interest column.
-    const cols = this.db
-      .query(`PRAGMA table_info(telegram_topics)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.db.query(`PRAGMA table_info(telegram_topics)`).all() as Array<{
+      name: string;
+    }>;
     if (!cols.some((c) => c.name === "interest")) {
-      this.db.exec(
-        `ALTER TABLE telegram_topics ADD COLUMN interest TEXT NOT NULL DEFAULT ''`,
-      );
+      this.db.exec(`ALTER TABLE telegram_topics ADD COLUMN interest TEXT NOT NULL DEFAULT ''`);
     }
 
     logger.info({ event: "store_ready", dbPath }, "SQLite store ready");
@@ -85,9 +83,7 @@ export class Store {
 
   static contentHash(item: Pick<NewsItem, "title" | "link">): string {
     return createHash("sha256")
-      .update(
-        `${item.title.trim().toLowerCase()}|${canonicalizeLink(item.link)}`,
-      )
+      .update(`${item.title.trim().toLowerCase()}|${canonicalizeLink(item.link)}`)
       .digest("hex");
   }
 
@@ -163,24 +159,14 @@ export class Store {
     return this.getTopic(channelId, topicName)?.thread_id ?? null;
   }
 
-  upsertTopic(
-    channelId: string,
-    topic: TopicConfig,
-    threadId: number,
-  ): void {
+  upsertTopic(channelId: string, topic: TopicConfig, threadId: number): void {
     this.db
       .query(
         `INSERT OR REPLACE INTO telegram_topics
            (channel_id, topic_name, thread_id, interest, updated_at)
          VALUES (?, ?, ?, ?, ?)`,
       )
-      .run(
-        channelId,
-        topic.name,
-        threadId,
-        topic.interest,
-        new Date().toISOString(),
-      );
+      .run(channelId, topic.name, threadId, topic.interest, new Date().toISOString());
   }
 
   /** Keep compatibility with older call sites. */
@@ -194,9 +180,7 @@ export class Store {
 
   deleteTopic(channelId: string, topicName: string): void {
     this.db
-      .query(
-        `DELETE FROM telegram_topics WHERE channel_id = ? AND topic_name = ?`,
-      )
+      .query(`DELETE FROM telegram_topics WHERE channel_id = ? AND topic_name = ?`)
       .run(channelId, topicName);
   }
 
