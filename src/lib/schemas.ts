@@ -124,27 +124,12 @@ export const llmRankResponseSchema = z.object({
   rankings: z.array(llmRankRowSchema).default([]),
 });
 
-export const openRouterUsageSchema = z
-  .object({
-    prompt_tokens: z.number().optional(),
-    completion_tokens: z.number().optional(),
-    total_tokens: z.number().optional(),
-    cost: z.number().optional(),
-    cost_details: z
-      .object({
-        upstream_inference_cost: z.number().optional(),
-      })
-      .optional(),
-  })
-  .passthrough();
-
 export type SourceConfig = z.infer<typeof sourceConfigSchema>;
 export type TopicConfig = z.infer<typeof topicConfigSchema>;
 export type AppConfig = z.infer<typeof appConfigSchema>;
 export type EnvSecrets = z.infer<typeof envSecretsSchema>;
 export type LlmRankRow = z.infer<typeof llmRankRowSchema>;
 export type LlmRankResponse = z.infer<typeof llmRankResponseSchema>;
-export type OpenRouterUsage = z.infer<typeof openRouterUsageSchema>;
 
 export function formatZodError(err: z.ZodError): string {
   return z.prettifyError(err);

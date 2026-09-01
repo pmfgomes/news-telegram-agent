@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { EventType, type StreamChunk } from "@tanstack/ai";
 import { fetchItemsForTopic, type SourceFetches } from "../fetch/index.ts";
 import type { AppConfig, NewsItem, TopicConfig } from "../lib/types.ts";
 import {
-  buildRankCompletionParams,
+  buildRankChatRequest,
+  buildRankModelOptions,
+  collectRankStream,
   mapTopicsAsCandidatesReady,
   parseRankings,
   RANK_MAX_TOKENS,
   RANK_REASONING_MAX_TOKENS,
   RankParseError,
+  RankStreamError,
 } from "./rank.ts";
 
 const portugal: TopicConfig = {
@@ -55,6 +59,12 @@ function news(id: string, source: string): NewsItem {
   };
 }
 
+async function* fakeStream(chunks: StreamChunk[]): AsyncIterable<StreamChunk> {
+  for (const chunk of chunks) {
+    yield chunk;
+  }
+}
+
 describe("topic fetch and ranking concurrency", () => {
   test("processes a ready topic without waiting for unrelated sources", async () => {
     const portugalFetch = Promise.withResolvers<NewsItem[]>();
@@ -95,27 +105,151 @@ describe("topic fetch and ranking concurrency", () => {
   });
 });
 
-describe("buildRankCompletionParams", () => {
-  test("reserves output tokens by capping reasoning below max_tokens", () => {
-    const params = buildRankCompletionParams({
-      model: "deepseek/deepseek-v4-flash",
+describe("buildRankChatRequest", () => {
+  test("caps completion budget and enables response healing with usage accounting", () => {
+    const request = buildRankChatRequest({
       prompt: "rank these candidates",
     });
+    const options = buildRankModelOptions();
 
-    expect(params.max_tokens).toBe(RANK_MAX_TOKENS);
-    expect(params.reasoning.max_tokens).toBe(RANK_REASONING_MAX_TOKENS);
-    expect(params.reasoning.exclude).toBe(true);
-    expect(params.max_tokens).toBeGreaterThan(params.reasoning.max_tokens);
-    expect(params.response_format).toEqual({ type: "json_object" });
-    expect(params.plugins).toEqual([{ id: "response-healing" }]);
-    expect(params.usage).toEqual({ include: true });
-    expect(params.messages).toEqual([
-      {
-        role: "system",
-        content: "You are a precise news clustering and ranking assistant. Reply with JSON only.",
-      },
-      { role: "user", content: "rank these candidates" },
-    ]);
+    expect(request.modelOptions).toEqual(options);
+    expect(options.maxCompletionTokens).toBe(RANK_MAX_TOKENS);
+    expect(options.reasoning).toEqual({ effort: "low" });
+    expect(options.responseFormat).toEqual({ type: "json_object" });
+    expect(options.plugins).toEqual([{ id: "response-healing" }]);
+    expect(options.streamOptions).toEqual({ includeUsage: true });
+    expect(request.systemPrompt).toBe(
+      "You are a precise news clustering and ranking assistant. Reply with JSON only.",
+    );
+    expect(request.userPrompt).toBe("rank these candidates");
+    expect(RANK_REASONING_MAX_TOKENS).toBeLessThan(RANK_MAX_TOKENS);
+  });
+});
+
+describe("collectRankStream", () => {
+  test("accumulates assistant text and maps billed usage from RUN_FINISHED", async () => {
+    const collected = await collectRankStream(
+      fakeStream([
+        {
+          type: EventType.RUN_STARTED,
+          runId: "run-123",
+          threadId: "thread-1",
+          timestamp: Date.now(),
+        },
+        {
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "msg-1",
+          delta: '{"rankings":',
+          content: '{"rankings":',
+          timestamp: Date.now(),
+        },
+        {
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "msg-1",
+          delta: "[]}",
+          content: '{"rankings":[]}',
+          timestamp: Date.now(),
+        },
+        {
+          type: EventType.RUN_FINISHED,
+          runId: "run-123",
+          threadId: "thread-1",
+          model: "google/gemini-2.5-flash-lite",
+          finishReason: "stop",
+          timestamp: Date.now(),
+          usage: {
+            promptTokens: 120,
+            completionTokens: 40,
+            totalTokens: 160,
+            cost: 0.00042,
+            costDetails: { upstreamCost: 0.0004 },
+          },
+        },
+      ]),
+    );
+
+    expect(collected.content).toBe('{"rankings":[]}');
+    expect(collected.runId).toBe("run-123");
+    expect(collected.servedModel).toBe("google/gemini-2.5-flash-lite");
+    expect(collected.finishReason).toBe("stop");
+    expect(collected.promptTokens).toBe(120);
+    expect(collected.completionTokens).toBe(40);
+    expect(collected.totalTokens).toBe(160);
+    expect(collected.cost).toBe(0.00042);
+    expect(collected.upstreamInferenceCost).toBe(0.0004);
+    expect(collected.events).toHaveLength(4);
+  });
+
+  test("preserves length finish reason for truncated parse errors", async () => {
+    const collected = await collectRankStream(
+      fakeStream([
+        {
+          type: EventType.RUN_STARTED,
+          runId: "run-length",
+          threadId: "thread-1",
+          timestamp: Date.now(),
+        },
+        {
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "msg-1",
+          delta: '{"rankings":[{"id":"a"',
+          content: '{"rankings":[{"id":"a"',
+          timestamp: Date.now(),
+        },
+        {
+          type: EventType.RUN_FINISHED,
+          runId: "run-length",
+          threadId: "thread-1",
+          finishReason: "length",
+          timestamp: Date.now(),
+          usage: {
+            promptTokens: 10,
+            completionTokens: 5,
+            totalTokens: 15,
+            cost: 0.01,
+          },
+        },
+      ]),
+    );
+
+    expect(collected.finishReason).toBe("length");
+    expect(collected.content).toBe('{"rankings":[{"id":"a"');
+  });
+
+  test("throws RankStreamError with provider rawEvent on RUN_ERROR", async () => {
+    await expect(
+      collectRankStream(
+        fakeStream([
+          {
+            type: EventType.RUN_ERROR,
+            message: "Provider returned error",
+            code: "provider_error",
+            rawEvent: { provider: "anthropic", detail: "rate limited" },
+            timestamp: Date.now(),
+          },
+        ]),
+      ),
+    ).rejects.toMatchObject({
+      name: "RankStreamError",
+      message: "Provider returned error",
+      code: "provider_error",
+      rawEvent: { provider: "anthropic", detail: "rate limited" },
+    });
+
+    try {
+      await collectRankStream(
+        fakeStream([
+          {
+            type: EventType.RUN_ERROR,
+            message: "Provider returned error",
+            code: "provider_error",
+            timestamp: Date.now(),
+          },
+        ]),
+      );
+    } catch (err) {
+      expect(err).toBeInstanceOf(RankStreamError);
+    }
   });
 });
 

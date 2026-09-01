@@ -38,7 +38,7 @@ docker compose up -d
 
 Logs (requests, failures, LLM tokens + OpenRouter billed `cost`) go to container stdout as JSON (pino). Follow with `docker compose logs -f`.
 
-When an LLM ranking response fails to parse, the complete raw completion is saved to `data/logs/llm-failures/` (one JSON file per failure) and the `llm_json_parse_failed` log line carries `stage` (where parsing rejected it), `finish_reason` / `native_finish_reason`, `provider`, head/tail previews, and `dump_path` pointing at that file. The `/news` closing reply reports the OpenRouter total and, if ranking failed for some topics, `Error in …` so you can look those topics up in the logs. The HTML newsletter still shows the total after the title.
+When an LLM ranking response fails to parse, the collected TanStack stream transcript is saved to `data/logs/llm-failures/` (one JSON file per failure) and the `llm_json_parse_failed` log line carries `stage` (where parsing rejected it), `finish_reason`, `run_id`, head/tail previews, and `dump_path` pointing at that file. The `/news` closing reply reports the OpenRouter total and, if ranking failed for some topics, `Error in …` so you can look those topics up in the logs. The HTML newsletter still shows the total after the title.
 
 ## Commands
 

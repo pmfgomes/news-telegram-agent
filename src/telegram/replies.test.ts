@@ -12,7 +12,7 @@ function charge(
 ): OpenRouterCharge {
   return {
     model: "google/gemini-2.5-flash-lite",
-    generationId: "gen-1",
+    runId: "run-1",
     promptTokens: 100,
     completionTokens: 50,
     ...overrides,
