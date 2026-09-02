@@ -27,7 +27,7 @@ src/
 cp .env.example .env
 ```
 
-2. Edit topics and sources in [`src/config/config.yaml`](src/config/config.yaml). Topic `name` must match your Telegram topic names exactly. Each source lists the topics it supplies; the agent fetches its 10 newest articles.
+2. Edit topics and sources in [`src/config/config.yaml`](src/config/config.yaml). Topic `name` must match your Telegram topic names exactly. Each source lists the topics it supplies; the agent fetches its `latest_per_source` newest articles (25 in the shipped config).
 
 3. Build and start (stays running):
 
@@ -105,7 +105,7 @@ sources:
 
 Keep `DATA_DIR` persistent so topic ids and posted-item dedupe survive container restarts.
 
-Each source contributes up to `latest_per_source` newest articles (10 by default). The model groups coverage of the same event and selects up to `top_n` story clusters **per topic**.
+Each source contributes up to `latest_per_source` newest articles (schema default 10; the shipped config uses 25 so that back-to-back runs still have fresh stories after dedupe). The model groups coverage of the same event and selects up to `top_n` story clusters **per topic**.
 
 Source fetches run concurrently with a 250 ms start stagger. A topic begins its
 OpenRouter grouping and ranking as soon as all sources mapped to that topic
