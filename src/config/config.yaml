@@ -1,6 +1,9 @@
 timezone: Europe/Lisbon
-latest_per_source: 10
-max_candidates: 80
+# Deep per-source pool: feeds that publish more than 10 items keep back-to-back
+# runs supplied with fresh stories after dedupe removes what was just posted.
+# Feeds that only expose 10 items (most WordPress sites) still contribute 10.
+latest_per_source: 25
+max_candidates: 120
 # Max story clusters per topic each run (included in the newsletter)
 top_n: 10
 relevance_threshold: 0.6
@@ -38,7 +41,7 @@ topics:
     telegram_thread_id: 24
 
 sources:
-  # Each source contributes its 10 latest articles to every mapped topic.
+  # Each source contributes its `latest_per_source` newest articles to every mapped topic.
   # International — technology (AI stories are filtered out)
   - name: BBC Technology
     topics: [Technology]
@@ -55,6 +58,12 @@ sources:
   - name: Wired
     topics: [Technology]
     rss_url: https://www.wired.com/feed/rss
+  - name: Engadget
+    topics: [Technology]
+    rss_url: https://www.engadget.com/rss.xml
+  - name: The Register
+    topics: [Technology]
+    rss_url: https://www.theregister.com/headlines.atom
 
   # AI-only feeds
   - name: TechCrunch AI
@@ -66,6 +75,18 @@ sources:
   - name: VentureBeat AI
     topics: [AI]
     rss_url: https://venturebeat.com/category/ai/feed/
+  - name: Ars Technica AI
+    topics: [AI]
+    rss_url: https://arstechnica.com/ai/feed/
+  - name: The Decoder
+    topics: [AI]
+    rss_url: https://the-decoder.com/feed/
+  - name: MIT Technology Review AI
+    topics: [AI]
+    rss_url: https://www.technologyreview.com/topic/artificial-intelligence/feed
+  - name: Wired AI
+    topics: [AI]
+    rss_url: https://www.wired.com/feed/tag/ai/latest/rss
 
   # Game-focused feeds (hardware and deals are excluded by the topic rules)
   - name: Polygon
@@ -86,6 +107,12 @@ sources:
   - name: Gematsu
     topics: [Gaming]
     rss_url: https://www.gematsu.com/feed
+  - name: PC Gamer
+    topics: [Gaming]
+    rss_url: https://www.pcgamer.com/rss/
+  - name: VGC
+    topics: [Gaming]
+    rss_url: https://www.videogameschronicle.com/feed/
 
   # International — world and economy (ranking_mode: latest — feeds are already on-topic)
   - name: BBC World
@@ -97,6 +124,9 @@ sources:
   - name: Al Jazeera
     topics: [World news]
     rss_url: https://www.aljazeera.com/xml/rss/all.xml
+  - name: Guardian World
+    topics: [World news]
+    rss_url: https://www.theguardian.com/world/rss
   - name: BBC Business
     topics: [World economy]
     rss_url: https://feeds.bbci.co.uk/news/business/rss.xml
@@ -112,24 +142,50 @@ sources:
   - name: The Economist Finance
     topics: [World economy]
     rss_url: https://www.economist.com/finance-and-economics/rss.xml
+  - name: Guardian Business
+    topics: [World economy]
+    rss_url: https://www.theguardian.com/uk/business/rss
 
-  # Portuguese national sources (Portugal / Portugal economy only).
+  # Portuguese national sources.
+  # General feeds map to Portugal; economy-only feeds map to Portugal economy,
+  # so each topic's candidate pool stays on-topic instead of sharing mixed feeds.
   # Público blocks direct /rss (403); Feedburner mirror works.
+  # Dead feeds (checked 2026-09): DN /rss 404, Expresso /rss 403, SIC /rss 403,
+  # TSF /rss 404, Renascença /rss 410, Dinheiro Vivo /rss 404, and
+  # observador.pt/seccao/economia/feed/ redirects to the site-wide feed.
   - name: Observador
-    topics: [Portugal, Portugal economy]
+    topics: [Portugal]
     rss_url: https://observador.pt/feed/
   - name: SAPO Notícias
-    topics: [Portugal, Portugal economy]
+    topics: [Portugal]
     rss_url: https://www.sapo.pt/rss
+  - name: Público
+    topics: [Portugal]
+    rss_url: https://feeds.feedburner.com/PublicoRSS
+  - name: RTP País
+    topics: [Portugal]
+    rss_url: https://www.rtp.pt/noticias/rss/pais
+  - name: Notícias ao Minuto País
+    topics: [Portugal]
+    rss_url: https://www.noticiasaominuto.com/rss/pais
+  - name: CNN Portugal
+    topics: [Portugal]
+    rss_url: https://cnnportugal.iol.pt/rss
   - name: ECO SAPO Notícias
-    topics: [Portugal, Portugal economy]
+    topics: [Portugal economy]
     rss_url: https://eco.sapo.pt/feed/
   - name: Jornal Económico
-    topics: [Portugal, Portugal economy]
+    topics: [Portugal economy]
     rss_url: https://jornaleconomico.sapo.pt/feed/
-  - name: Público
-    topics: [Portugal, Portugal economy]
-    rss_url: https://feeds.feedburner.com/PublicoRSS
+  - name: Jornal de Negócios
+    topics: [Portugal economy]
+    rss_url: https://www.jornaldenegocios.pt/rss
+  - name: Notícias ao Minuto Economia
+    topics: [Portugal economy]
+    rss_url: https://www.noticiasaominuto.com/rss/economia
+  - name: Executive Digest
+    topics: [Portugal economy]
+    rss_url: https://executivedigest.sapo.pt/feed/
 
   # Algarve-only regional sources (ranking_mode: latest — no place-name filter).
   - name: Jornal do Algarve
@@ -138,3 +194,12 @@ sources:
   - name: Região Sul
     topics: [Algarve]
     rss_url: https://regiao-sul.pt/feed/
+  - name: Sul Informação
+    topics: [Algarve]
+    rss_url: https://www.sulinformacao.pt/feed/
+  - name: Postal do Algarve
+    topics: [Algarve]
+    rss_url: https://postal.pt/feed/
+  - name: Barlavento
+    topics: [Algarve]
+    rss_url: https://www.barlavento.pt/feed/

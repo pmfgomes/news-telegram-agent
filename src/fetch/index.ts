@@ -73,6 +73,28 @@ function selectLatest(items: NewsItem[], limit: number): NewsItem[] {
     .map(({ item }) => item);
 }
 
+/**
+ * Decode honoring the declared charset (HTTP header first, then XML declaration).
+ * Some Portuguese feeds (e.g. Jornal de Negócios) serve ISO-8859-1; decoding
+ * them as UTF-8 garbles every accented character.
+ */
+function decodeBody(buffer: ArrayBuffer, contentType: string | null): string {
+  const utf8 = new TextDecoder().decode(buffer);
+  const headerCharset = contentType?.match(/charset=["']?([A-Za-z0-9_-]+)/i)?.[1];
+  const declCharset = utf8
+    .slice(0, 256)
+    .match(/<\?xml[^>]*encoding=["']([A-Za-z0-9_-]+)["']/i)?.[1];
+  const charset = (headerCharset ?? declCharset)?.toLowerCase();
+  if (!charset || charset === "utf-8" || charset === "utf8") return utf8;
+  try {
+    // bun-types only lists Buffer-style encodings, but the runtime accepts any
+    // WHATWG label (e.g. "iso-8859-1"); the catch falls back for bad labels.
+    return new TextDecoder(charset as Bun.Encoding).decode(buffer);
+  } catch {
+    return utf8;
+  }
+}
+
 async function fetchText(
   url: string,
   headers: Record<string, string> = { "User-Agent": USER_AGENT, Accept: "*/*" },
@@ -82,11 +104,12 @@ async function fetchText(
     redirect: "follow",
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
-  const body = await res.text();
+  const contentType = res.headers.get("content-type");
+  const body = decodeBody(await res.arrayBuffer(), contentType);
   return {
     status: res.status,
     body,
-    contentType: res.headers.get("content-type"),
+    contentType,
   };
 }
 
